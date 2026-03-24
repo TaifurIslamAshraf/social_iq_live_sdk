@@ -6,6 +6,7 @@
 3. [Backend Environment Variables](#backend-environment-variables)
 4. [Flutter SDK Integration](#flutter-sdk-integration)
 5. [Complete Example: Adding Live & Call Features](#complete-example)
+6. [Live Broadcast — Comments & Reactions](#live-broadcast--comments--reactions)
 
 ---
 
@@ -362,6 +363,102 @@ void watchLive(BuildContext context, String hostRoomName) {
   );
 }
 ```
+
+---
+
+## Live Broadcast — Comments & Reactions
+
+Comments and reactions are **built-in and automatic** inside `LiveBroadcastHost` and `LiveBroadcastViewer`. The SDK connects to your Socket.IO server and handles all real-time events internally — no extra setup needed.
+
+### How it works (Socket.IO Events)
+
+| Event | Direction | Description |
+|---|---|---|
+| `join_live` | Client → Server | Fired when a viewer joins the broadcast room |
+| `leave_live` | Client → Server | Fired when a viewer leaves |
+| `live_comment` | Client ↔ Server | Sends/receives a chat message with user name & avatar |
+| `live_reaction` | Client ↔ Server | Sends/receives an emoji reaction (❤️ 🔥 😂 👏 😮 🎉) |
+| `viewer_count` | Server → Client | Backend pushes the updated viewer count to all clients |
+
+### Automatic behaviour (built-in screens)
+
+You don't need to write any code — the widgets below are already included in `LiveBroadcastHost` and `LiveBroadcastViewer`:
+
+| Widget | What it does |
+|---|---|
+| `CommentOverlay` | Scrolling semi-transparent list of live comments (name + avatar + message) |
+| `CommentInput` | Frosted-glass text field for viewers to type and send messages |
+| `ReactionAnimation` | Floating emoji particles that drift upward when reactions arrive |
+| `ReactionBar` | Emoji picker row shown when the ❤️ button is tapped |
+
+### Manual usage (programmatic API)
+
+If you are building a **custom UI**, you can call these methods directly on your `LiveController`:
+
+```dart
+// Send a comment
+liveController.sendComment('Love this stream! 🔥');
+
+// Send a reaction emoji
+liveController.sendReaction('❤️');  // ❤️ 🔥 😂 👏 😮 🎉
+
+// Read the current comment list
+final List<LiveComment> comments = liveController.comments;
+// comment.userName    → sender's display name
+// comment.userAvatar  → sender's avatar URL (nullable)
+// comment.message     → text content
+// comment.timestamp   → DateTime when received
+
+// Read pending reaction animations
+final List<LiveReaction> reactions = liveController.pendingReactions;
+// reaction.emoji      → emoji string, e.g. "❤️"
+// reaction.userName   → sender's display name
+```
+
+### Custom screen layout example
+
+If you want to build a fully custom live viewer UI, overlay the widgets like this:
+
+```dart
+import 'package:social_iq_live_sdk/social_iq_live_sdk.dart';
+
+Stack(
+  children: [
+    // Full-screen video feed here ...
+
+    // Comment list — bottom left area
+    Positioned(
+      left: 0, right: 80, bottom: 100,
+      child: CommentOverlay(comments: liveController.comments),
+    ),
+
+    // Floating emoji reactions — bottom right
+    Positioned(
+      right: 8, bottom: 160,
+      child: ReactionAnimation(reactions: liveController.pendingReactions),
+    ),
+
+    // Comment input + reaction button — very bottom
+    Positioned(
+      left: 12, right: 12, bottom: 16,
+      child: Row(
+        children: [
+          Expanded(
+            child: CommentInput(onSubmit: liveController.sendComment),
+          ),
+          const SizedBox(width: 10),
+          ReactionBar(onReaction: liveController.sendReaction),
+        ],
+      ),
+    ),
+  ],
+)
+```
+
+> [!NOTE]
+> `SocialIqLiveSdk.initialize(socketUrl: 'https://api.yourdomain.com')` must be called in `main.dart` before using any live feature. The Socket.IO connection is established automatically when the broadcast starts.
+
+---
 
 ### Handle Incoming Calls
 
