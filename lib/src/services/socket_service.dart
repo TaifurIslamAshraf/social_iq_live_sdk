@@ -13,6 +13,7 @@ class SocketService extends ChangeNotifier {
   final _commentController = StreamController<Map<String, dynamic>>.broadcast();
   final _reactionController = StreamController<Map<String, dynamic>>.broadcast();
   final _viewerCountController = StreamController<int>.broadcast();
+  final _connectController = StreamController<void>.broadcast(); // fires on (re)connect
 
   // Stream controllers for call signaling
   final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
@@ -23,6 +24,7 @@ class SocketService extends ChangeNotifier {
   Stream<Map<String, dynamic>> get onComment => _commentController.stream;
   Stream<Map<String, dynamic>> get onReaction => _reactionController.stream;
   Stream<int> get onViewerCountUpdate => _viewerCountController.stream;
+  Stream<void> get onConnect => _connectController.stream;  // fires on every connect/reconnect
   Stream<Map<String, dynamic>> get onIncomingCall => _incomingCallController.stream;
   Stream<Map<String, dynamic>> get onCallAccepted => _callAcceptedController.stream;
   Stream<Map<String, dynamic>> get onCallRejected => _callRejectedController.stream;
@@ -47,6 +49,7 @@ class SocketService extends ChangeNotifier {
 
     _socket!.onConnect((_) {
       _isConnected = true;
+      _connectController.add(null); // notify listeners of (re)connect
       debugPrint('[SocketService] Connected');
       notifyListeners();
     });
@@ -209,6 +212,7 @@ class SocketService extends ChangeNotifier {
     _commentController.close();
     _reactionController.close();
     _viewerCountController.close();
+    _connectController.close();
     _incomingCallController.close();
     _callAcceptedController.close();
     _callRejectedController.close();

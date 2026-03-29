@@ -23,6 +23,8 @@ class CallController extends ChangeNotifier {
   bool _isSpeakerOn = false;
 
   StreamSubscription? _callEndedSub;
+  StreamSubscription? _callResponseSub;
+  StreamSubscription? _extraSub;
 
   // Public getters
   LiveKitService get livekitService => _livekitService;
@@ -61,6 +63,11 @@ class CallController extends ChangeNotifier {
     String? receiverName,
     String? receiverAvatar,
   }) async {
+    // Cancel any lingering subscriptions from a previous call
+    _callResponseSub?.cancel();
+    _extraSub?.cancel();
+    _callEndedSub?.cancel();
+
     _callState = CallState.connecting;
     _callType = callType;
     _roomName = roomName;
@@ -84,27 +91,47 @@ class CallController extends ChangeNotifier {
         room: roomName,
       );
 
-      // Signal the receiver before connecting LiveKit
+      // Send call offer to the receiver BEFORE joining LiveKit
       _socketService.sendCallOffer(
         callerId: callerId,
         receiverId: receiverId,
         roomName: roomName,
         callType: callType == CallType.video ? 'video' : 'audio',
-        callerName: receiverName, // caller's own name
+        callerName: receiverName,
         callerAvatar: receiverAvatar,
       );
 
-      await _livekitService.connect(
-        url: tokenData['livekitUrl'] ?? livekitUrl,
-        token: tokenData['callerToken'],
-        enableCamera: callType == CallType.video,
-        enableMicrophone: true,
-      );
+      // ── FIX Bug 1 ──────────────────────────────────────────────────────────
+      // Stay in 'Calling...' (connecting) state. Only connect to LiveKit and
+      // start the timer when the receiver explicitly accepts the call.
+      _callResponseSub = _socketService.onCallAccepted.listen((_) async {
+        if (_callState != CallState.connecting) return;
+        _extraSub?.cancel();
+        try {
+          await _livekitService.connect(
+            url: tokenData['livekitUrl'] ?? livekitUrl,
+            token: tokenData['callerToken'],
+            enableCamera: callType == CallType.video,
+            enableMicrophone: true,
+          );
+          _callState = CallState.connected;
+          _startDurationTimer();
+          _livekitService.addListener(_onLiveKitUpdate);
+          notifyListeners();
+        } catch (e) {
+          _callState = CallState.ended;
+          notifyListeners();
+        }
+      });
 
-      _callState = CallState.connected;
-      _startDurationTimer();
-      _livekitService.addListener(_onLiveKitUpdate);
-      notifyListeners();
+      // If receiver declines, end the call immediately
+      _extraSub = _socketService.onCallRejected.listen((_) {
+        if (_callState != CallState.connecting) return;
+        _callResponseSub?.cancel();
+        _callState = CallState.ended;
+        notifyListeners();
+      });
+
     } catch (e) {
       _callState = CallState.ended;
       notifyListeners();
@@ -137,7 +164,6 @@ class CallController extends ChangeNotifier {
 
     _socketService.connect(url: socketUrl, authToken: userToken);
     _socketService.registerUser(receiverId);
-    _socketService.acceptCall(callerId: callerId, receiverId: receiverId, roomName: roomName);
     _listenForCallEnded();
 
     try {
@@ -152,6 +178,15 @@ class CallController extends ChangeNotifier {
         token: tokenData['receiverToken'],
         enableCamera: callType == CallType.video,
         enableMicrophone: true,
+      );
+
+      // Signal caller AFTER we are successfully in the LiveKit room,
+      // so the caller transitions from "Calling..." to "Connected" at
+      // the right time and immediately hears audio.
+      _socketService.acceptCall(
+        callerId: callerId,
+        receiverId: receiverId,
+        roomName: roomName,
       );
 
       _callState = CallState.connected;
@@ -208,6 +243,8 @@ class CallController extends ChangeNotifier {
     _callState = CallState.ended;
     _durationTimer?.cancel();
     _callEndedSub?.cancel();
+    _callResponseSub?.cancel();  // cancel "Calling..." listener
+    _extraSub?.cancel();          // cancel reject listener
 
     // Signal the other party that the call ended
     if (_callerId != null && _receiverId != null) {
