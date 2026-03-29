@@ -2,11 +2,13 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import '../models/call_config.dart';
 import '../services/livekit_service.dart';
+import '../services/socket_service.dart';
 import '../services/api_service.dart';
 
 /// Controller for managing call state (audio, video, group).
 class CallController extends ChangeNotifier {
   final LiveKitService _livekitService = LiveKitService();
+  final SocketService _socketService = SocketService();
   final ApiService _apiService;
 
   CallState _callState = CallState.idle;
@@ -14,9 +16,13 @@ class CallController extends ChangeNotifier {
   String? _roomName;
   String? _receiverName;
   String? _receiverAvatar;
+  String? _callerId;
+  String? _receiverId;
   Duration _callDuration = Duration.zero;
   Timer? _durationTimer;
   bool _isSpeakerOn = false;
+
+  StreamSubscription? _callEndedSub;
 
   // Public getters
   LiveKitService get livekitService => _livekitService;
@@ -51,23 +57,41 @@ class CallController extends ChangeNotifier {
     required String roomName,
     required CallType callType,
     required String livekitUrl,
+    required String socketUrl,
     String? receiverName,
     String? receiverAvatar,
   }) async {
     _callState = CallState.connecting;
     _callType = callType;
     _roomName = roomName;
+    _callerId = callerId;
+    _receiverId = receiverId;
     _receiverName = receiverName;
     _receiverAvatar = receiverAvatar;
     notifyListeners();
 
     _apiService.setAuthToken(userToken);
 
+    // Connect socket and register user so we can receive call events
+    _socketService.connect(url: socketUrl, authToken: userToken);
+    _socketService.registerUser(callerId);
+    _listenForCallEnded();
+
     try {
       final tokenData = await _apiService.getCallToken(
         callerId: callerId,
         receiverId: receiverId,
         room: roomName,
+      );
+
+      // Signal the receiver before connecting LiveKit
+      _socketService.sendCallOffer(
+        callerId: callerId,
+        receiverId: receiverId,
+        roomName: roomName,
+        callType: callType == CallType.video ? 'video' : 'audio',
+        callerName: receiverName, // caller's own name
+        callerAvatar: receiverAvatar,
       );
 
       await _livekitService.connect(
@@ -96,17 +120,25 @@ class CallController extends ChangeNotifier {
     required String roomName,
     required CallType callType,
     required String livekitUrl,
+    required String socketUrl,
     String? callerName,
     String? callerAvatar,
   }) async {
     _callState = CallState.connecting;
     _callType = callType;
     _roomName = roomName;
+    _callerId = callerId;
+    _receiverId = receiverId;
     _receiverName = callerName;
     _receiverAvatar = callerAvatar;
     notifyListeners();
 
     _apiService.setAuthToken(userToken);
+
+    _socketService.connect(url: socketUrl, authToken: userToken);
+    _socketService.registerUser(receiverId);
+    _socketService.acceptCall(callerId: callerId, receiverId: receiverId, roomName: roomName);
+    _listenForCallEnded();
 
     try {
       final tokenData = await _apiService.getCallToken(
@@ -175,9 +207,16 @@ class CallController extends ChangeNotifier {
   Future<void> endCall() async {
     _callState = CallState.ended;
     _durationTimer?.cancel();
+    _callEndedSub?.cancel();
+
+    // Signal the other party that the call ended
+    if (_callerId != null && _receiverId != null) {
+      _socketService.endCallSignal(callerId: _callerId!, receiverId: _receiverId!);
+    }
 
     _livekitService.removeListener(_onLiveKitUpdate);
     await _livekitService.disconnect();
+    _socketService.disconnect();
 
     if (_roomName != null) {
       try {
@@ -188,6 +227,20 @@ class CallController extends ChangeNotifier {
     }
 
     notifyListeners();
+  }
+
+  void _listenForCallEnded() {
+    _callEndedSub?.cancel();
+    _callEndedSub = _socketService.onCallEnded.listen((_) {
+      if (_callState != CallState.ended) {
+        _callState = CallState.ended;
+        _durationTimer?.cancel();
+        _livekitService.removeListener(_onLiveKitUpdate);
+        _livekitService.disconnect();
+        _socketService.disconnect();
+        notifyListeners();
+      }
+    });
   }
 
   /// Toggle microphone.
@@ -230,8 +283,10 @@ class CallController extends ChangeNotifier {
   @override
   void dispose() {
     _durationTimer?.cancel();
+    _callEndedSub?.cancel();
     _livekitService.removeListener(_onLiveKitUpdate);
     _livekitService.dispose();
+    _socketService.dispose();
     super.dispose();
   }
 }

@@ -52,6 +52,7 @@ class LiveBroadcastViewer extends StatefulWidget {
 class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   late final LiveController _controller;
   bool _showReactionBar = false;
+  bool _hasNavigatedAway = false;
 
   @override
   void initState() {
@@ -87,20 +88,31 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
     }
   }
 
+  /// Safely navigate away exactly once, deferred to after the current frame.
+  void _navigateAway() {
+    if (_hasNavigatedAway) return;
+    _hasNavigatedAway = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        widget.onLiveEnded?.call();
+        Navigator.of(context).pop();
+      }
+    });
+  }
+
   void _onUpdate() {
     if (!mounted) return;
     setState(() {});
 
-    // If host disconnected, navigate viewer away
+    // If host disconnected, navigate viewer away after the frame
     if (!_controller.isLive) {
-      widget.onLiveEnded?.call();
+      _navigateAway();
     }
   }
 
   Future<void> _leaveStream() async {
     await _controller.stopBroadcast();
-    widget.onLiveEnded?.call();
-    if (mounted) Navigator.of(context).pop();
+    _navigateAway();
   }
 
   @override

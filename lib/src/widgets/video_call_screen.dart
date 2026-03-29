@@ -76,6 +76,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           roomName: room,
           callType: CallType.video,
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,
+          socketUrl: SocialIqLiveSdkConfig.socketUrl,
           callerName: widget.incomingCallerName,
           callerAvatar: widget.receiverAvatar,
         );
@@ -87,6 +88,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           roomName: room,
           callType: CallType.video,
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,
+          socketUrl: SocialIqLiveSdkConfig.socketUrl,
           receiverName: widget.receiverName,
           receiverAvatar: widget.receiverAvatar,
         );
@@ -105,7 +107,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   void _onUpdate() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    // Auto-pop when the remote party ends the call
+    if (_controller.callState == CallState.ended) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop();
+      });
+    }
   }
 
   Future<void> _endCall() async {

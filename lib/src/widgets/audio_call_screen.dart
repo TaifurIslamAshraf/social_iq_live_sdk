@@ -84,6 +84,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
           roomName: room,
           callType: CallType.audio,
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,
+          socketUrl: SocialIqLiveSdkConfig.socketUrl,
           callerName: widget.receiverName,
           callerAvatar: widget.receiverAvatar,
         );
@@ -95,6 +96,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
           roomName: room,
           callType: CallType.audio,
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,
+          socketUrl: SocialIqLiveSdkConfig.socketUrl,
           receiverName: widget.receiverName,
           receiverAvatar: widget.receiverAvatar,
         );
