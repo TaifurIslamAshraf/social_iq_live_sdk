@@ -69,7 +69,10 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
-    _startCall();
+    _startCall().then((_) {
+      // Default speaker ON for audio calls so voice is immediately audible
+      _controller.setSpeakerEnabled(true);
+    });
   }
 
   Future<void> _startCall() async {
@@ -77,10 +80,13 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       final room = widget.roomName ?? 'call_${widget.callerId}_${widget.receiverId}';
 
       if (widget.isIncoming) {
+        // isIncoming=true: this device IS the receiver.
+        // widget.callerId  = the person who called us (the original caller)
+        // widget.receiverId = us (receiver of the call)
         await _controller.answerCall(
           userToken: widget.userToken,
-          receiverId: widget.callerId,
-          callerId: widget.receiverId,
+          callerId: widget.callerId,   // original caller's ID
+          receiverId: widget.receiverId, // our own ID
           roomName: room,
           callType: CallType.audio,
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,

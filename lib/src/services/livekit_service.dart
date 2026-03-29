@@ -31,11 +31,28 @@ class LiveKitService extends ChangeNotifier {
     bool enableMicrophone = true,
   }) async {
     _room = Room(
-      roomOptions: const RoomOptions(
+      roomOptions: RoomOptions(
         adaptiveStream: true,
         dynacast: true,
-        defaultVideoPublishOptions: VideoPublishOptions(
+        defaultVideoPublishOptions: const VideoPublishOptions(
           simulcast: true,
+        ),
+        // Properly configure audio for VoIP calls.
+        // This sets Android AudioMode to IN_COMMUNICATION (mode 3)
+        // instead of the default NORMAL (mode 0) which causes no-audio.
+        defaultAudioCaptureOptions: const AudioCaptureOptions(
+          noiseSuppression: true,
+          echoCancellation: true,
+          autoGainControl: true,
+          highPassFilter: true,
+          typingNoiseDetection: true,
+        ),
+        defaultAudioPublishOptions: const AudioPublishOptions(
+          dtx: true,
+          red: true,
+        ),
+        defaultAudioOutputOptions: const AudioOutputOptions(
+          speakerOn: true,
         ),
       ),
     );
@@ -46,6 +63,9 @@ class LiveKitService extends ChangeNotifier {
     await _room!.connect(url, token);
 
     _localParticipant = _room!.localParticipant;
+
+    // Force Android into IN_COMMUNICATION audio mode for proper VoIP routing
+    await _room!.setSpeakerOn(true);
 
     if (enableCamera) {
       await _localParticipant?.setCameraEnabled(true);
@@ -62,6 +82,7 @@ class LiveKitService extends ChangeNotifier {
 
     notifyListeners();
   }
+
 
   /// Disconnect from the room.
   Future<void> disconnect() async {

@@ -267,6 +267,13 @@ class CallController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Explicitly set speaker state.
+  Future<void> setSpeakerEnabled(bool enabled) async {
+    _isSpeakerOn = enabled;
+    await _livekitService.setSpeakerOn(enabled);
+    notifyListeners();
+  }
+
   void _startDurationTimer() {
     _callDuration = Duration.zero;
     _durationTimer?.cancel();
