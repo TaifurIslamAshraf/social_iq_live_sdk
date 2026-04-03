@@ -69,10 +69,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
       CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
     );
 
-    _startCall().then((_) {
-      // Default speaker ON for audio calls so voice is immediately audible
-      _controller.setSpeakerEnabled(true);
-    });
+    _startCall();
   }
 
   Future<void> _startCall() async {

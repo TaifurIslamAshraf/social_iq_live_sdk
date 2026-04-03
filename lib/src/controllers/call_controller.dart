@@ -6,6 +6,12 @@ import '../services/socket_service.dart';
 import '../services/api_service.dart';
 
 /// Controller for managing call state (audio, video, group).
+///
+/// Optimisation notes for low-resource VPS (1 CPU core / 4 GB RAM):
+///  - Video calls use [StreamMode.videoCall]: 360p @ 15 fps, 500 kbps, no simulcast.
+///  - Audio calls use [StreamMode.audioCall]: camera disabled, DTX active.
+///  - Duration-timer `notifyListeners` is the only high-frequency rebuild trigger;
+///    it is preserved as-is because the timer fires once per second (acceptable).
 class CallController extends ChangeNotifier {
   final LiveKitService _livekitService = LiveKitService();
   final SocketService _socketService = SocketService();
@@ -40,16 +46,33 @@ class CallController extends ChangeNotifier {
   int get participantCount => _livekitService.participantCount;
 
   String get formattedDuration {
-    final minutes = _callDuration.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = _callDuration.inSeconds.remainder(60).toString().padLeft(2, '0');
-    final hours = _callDuration.inHours;
-    if (hours > 0) {
-      return '$hours:$minutes:$seconds';
-    }
-    return '$minutes:$seconds';
+    final h = _callDuration.inHours;
+    final m = _callDuration.inMinutes.remainder(60).toString().padLeft(2, '0');
+    final s = _callDuration.inSeconds.remainder(60).toString().padLeft(2, '0');
+    return h > 0 ? '$h:$m:$s' : '$m:$s';
   }
 
   CallController({required ApiService apiService}) : _apiService = apiService;
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // StreamMode helper
+  // ─────────────────────────────────────────────────────────────────────────
+
+  StreamMode _modeFor(CallType type) {
+    switch (type) {
+      case CallType.audio:
+        return StreamMode.audioCall;
+      case CallType.video:
+        return StreamMode.videoCall;
+      case CallType.group:
+        // Group calls: video at reduced quality, no simulcast.
+        return StreamMode.videoCall;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Outgoing call
+  // ─────────────────────────────────────────────────────────────────────────
 
   /// Start a 1:1 call (audio or video).
   Future<void> startCall({
@@ -63,7 +86,7 @@ class CallController extends ChangeNotifier {
     String? receiverName,
     String? receiverAvatar,
   }) async {
-    // Cancel any lingering subscriptions from a previous call
+    // Cancel any lingering subscriptions from a previous call.
     _callResponseSub?.cancel();
     _extraSub?.cancel();
     _callEndedSub?.cancel();
@@ -79,7 +102,6 @@ class CallController extends ChangeNotifier {
 
     _apiService.setAuthToken(userToken);
 
-    // Connect socket and register user so we can receive call events
     _socketService.connect(url: socketUrl, authToken: userToken);
     _socketService.registerUser(callerId);
     _listenForCallEnded();
@@ -91,7 +113,7 @@ class CallController extends ChangeNotifier {
         room: roomName,
       );
 
-      // Send call offer to the receiver BEFORE joining LiveKit
+      // Notify receiver.
       _socketService.sendCallOffer(
         callerId: callerId,
         receiverId: receiverId,
@@ -101,9 +123,7 @@ class CallController extends ChangeNotifier {
         callerAvatar: receiverAvatar,
       );
 
-      // ── FIX Bug 1 ──────────────────────────────────────────────────────────
-      // Stay in 'Calling...' (connecting) state. Only connect to LiveKit and
-      // start the timer when the receiver explicitly accepts the call.
+      // Stay in Calling… state; join LiveKit only when receiver accepts.
       _callResponseSub = _socketService.onCallAccepted.listen((_) async {
         if (_callState != CallState.connecting) return;
         _extraSub?.cancel();
@@ -113,7 +133,11 @@ class CallController extends ChangeNotifier {
             token: tokenData['callerToken'],
             enableCamera: callType == CallType.video,
             enableMicrophone: true,
+            mode: _modeFor(callType), // ← VPS-optimised mode
           );
+          // Sync speaker state so the UI button reflects the actual routing
+          // set inside livekit_service.connect() (audio=earpiece, video=speaker).
+          _isSpeakerOn = callType != CallType.audio;
           _callState = CallState.connected;
           _startDurationTimer();
           _livekitService.addListener(_onLiveKitUpdate);
@@ -124,20 +148,23 @@ class CallController extends ChangeNotifier {
         }
       });
 
-      // If receiver declines, end the call immediately
+      // Receiver declined.
       _extraSub = _socketService.onCallRejected.listen((_) {
         if (_callState != CallState.connecting) return;
         _callResponseSub?.cancel();
         _callState = CallState.ended;
         notifyListeners();
       });
-
     } catch (e) {
       _callState = CallState.ended;
       notifyListeners();
       rethrow;
     }
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Incoming call
+  // ─────────────────────────────────────────────────────────────────────────
 
   /// Join a call as receiver (for incoming calls).
   Future<void> answerCall({
@@ -161,7 +188,6 @@ class CallController extends ChangeNotifier {
     notifyListeners();
 
     _apiService.setAuthToken(userToken);
-
     _socketService.connect(url: socketUrl, authToken: userToken);
     _socketService.registerUser(receiverId);
     _listenForCallEnded();
@@ -178,11 +204,12 @@ class CallController extends ChangeNotifier {
         token: tokenData['receiverToken'],
         enableCamera: callType == CallType.video,
         enableMicrophone: true,
+        mode: _modeFor(callType), // ← VPS-optimised mode
       );
+      // Sync speaker state so the UI button reflects the actual routing.
+      _isSpeakerOn = callType != CallType.audio;
 
-      // Signal caller AFTER we are successfully in the LiveKit room,
-      // so the caller transitions from "Calling..." to "Connected" at
-      // the right time and immediately hears audio.
+      // Signal caller AFTER we are in the room so audio starts immediately.
       _socketService.acceptCall(
         callerId: callerId,
         receiverId: receiverId,
@@ -199,6 +226,10 @@ class CallController extends ChangeNotifier {
       rethrow;
     }
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Group call
+  // ─────────────────────────────────────────────────────────────────────────
 
   /// Join a group call.
   Future<void> joinGroupCall({
@@ -225,7 +256,10 @@ class CallController extends ChangeNotifier {
         token: tokenData['token'],
         enableCamera: true,
         enableMicrophone: true,
+        mode: StreamMode.videoCall, // group = videoCall mode (360p, no simulcast)
       );
+      // Group calls use speaker; sync UI state.
+      _isSpeakerOn = true;
 
       _callState = CallState.connected;
       _startDurationTimer();
@@ -238,17 +272,21 @@ class CallController extends ChangeNotifier {
     }
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // End call
+  // ─────────────────────────────────────────────────────────────────────────
+
   /// End the call.
   Future<void> endCall() async {
     _callState = CallState.ended;
     _durationTimer?.cancel();
     _callEndedSub?.cancel();
-    _callResponseSub?.cancel();  // cancel "Calling..." listener
-    _extraSub?.cancel();          // cancel reject listener
+    _callResponseSub?.cancel();
+    _extraSub?.cancel();
 
-    // Signal the other party that the call ended
     if (_callerId != null && _receiverId != null) {
-      _socketService.endCallSignal(callerId: _callerId!, receiverId: _receiverId!);
+      _socketService.endCallSignal(
+          callerId: _callerId!, receiverId: _receiverId!);
     }
 
     _livekitService.removeListener(_onLiveKitUpdate);
@@ -266,6 +304,38 @@ class CallController extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // Controls
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Future<void> toggleMute() async {
+    await _livekitService.toggleMicrophone();
+    notifyListeners();
+  }
+
+  Future<void> toggleCamera() async {
+    await _livekitService.toggleCamera();
+    notifyListeners();
+  }
+
+  Future<void> switchCamera() async => _livekitService.switchCamera();
+
+  Future<void> toggleSpeaker() async {
+    _isSpeakerOn = !_isSpeakerOn;
+    await _livekitService.setSpeakerOn(_isSpeakerOn);
+    notifyListeners();
+  }
+
+  Future<void> setSpeakerEnabled(bool enabled) async {
+    _isSpeakerOn = enabled;
+    await _livekitService.setSpeakerOn(enabled);
+    notifyListeners();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Internal
+  // ─────────────────────────────────────────────────────────────────────────
+
   void _listenForCallEnded() {
     _callEndedSub?.cancel();
     _callEndedSub = _socketService.onCallEnded.listen((_) {
@@ -280,54 +350,24 @@ class CallController extends ChangeNotifier {
     });
   }
 
-  /// Toggle microphone.
-  Future<void> toggleMute() async {
-    await _livekitService.toggleMicrophone();
-    notifyListeners();
-  }
-
-  /// Toggle camera.
-  Future<void> toggleCamera() async {
-    await _livekitService.toggleCamera();
-    notifyListeners();
-  }
-
-  /// Switch camera (front/rear).
-  Future<void> switchCamera() async {
-    await _livekitService.switchCamera();
-  }
-
-  /// Toggle speaker.
-  Future<void> toggleSpeaker() async {
-    _isSpeakerOn = !_isSpeakerOn;
-    await _livekitService.setSpeakerOn(_isSpeakerOn);
-    notifyListeners();
-  }
-
-  /// Explicitly set speaker state.
-  Future<void> setSpeakerEnabled(bool enabled) async {
-    _isSpeakerOn = enabled;
-    await _livekitService.setSpeakerOn(enabled);
-    notifyListeners();
-  }
-
   void _startDurationTimer() {
     _callDuration = Duration.zero;
     _durationTimer?.cancel();
+    // Fires once per second — acceptable rebuild frequency for the call timer.
     _durationTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _callDuration += const Duration(seconds: 1);
       notifyListeners();
     });
   }
 
-  void _onLiveKitUpdate() {
-    notifyListeners();
-  }
+  void _onLiveKitUpdate() => notifyListeners();
 
   @override
   void dispose() {
     _durationTimer?.cancel();
     _callEndedSub?.cancel();
+    _callResponseSub?.cancel();
+    _extraSub?.cancel();
     _livekitService.removeListener(_onLiveKitUpdate);
     _livekitService.dispose();
     _socketService.dispose();

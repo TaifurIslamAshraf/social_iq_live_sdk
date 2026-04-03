@@ -9,6 +9,13 @@ import 'live_broadcast_host.dart' show SocialIqLiveSdkConfig;
 
 /// Full-screen live broadcast viewer screen.
 ///
+/// Performance optimisations for low-resource VPS:
+///  - Subscribes at [VideoQuality.MEDIUM] by default so the server does not
+///    need to route the full-bitrate simulcast layer to every viewer.
+///  - [RepaintBoundary] around the remote video texture prevents video repaints
+///    from invalidating the comment/reaction overlay widgets.
+///  - [VideoRenderMode.auto] prefers hardware decode on mobile.
+///
 /// Usage:
 /// ```dart
 /// Navigator.push(context, MaterialPageRoute(
@@ -33,6 +40,10 @@ class LiveBroadcastViewer extends StatefulWidget {
   final String? hostAvatar;
   final VoidCallback? onLiveEnded;
 
+  /// Override the default subscription quality.
+  /// Use [VideoQuality.LOW] on very slow connections to save server bandwidth.
+  final VideoQuality preferredQuality;
+
   const LiveBroadcastViewer({
     super.key,
     required this.userToken,
@@ -43,6 +54,7 @@ class LiveBroadcastViewer extends StatefulWidget {
     this.hostName,
     this.hostAvatar,
     this.onLiveEnded,
+    this.preferredQuality = VideoQuality.MEDIUM, // ← reduced default
   });
 
   @override
@@ -53,6 +65,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   late final LiveController _controller;
   bool _showReactionBar = false;
   bool _hasNavigatedAway = false;
+  bool _liveEnded = false; // true once host ends stream; shows overlay before pop
 
   @override
   void initState() {
@@ -74,6 +87,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
         roomName: widget.roomName,
         livekitUrl: SocialIqLiveSdkConfig.serverUrl,
         socketUrl: SocialIqLiveSdkConfig.socketUrl,
+        preferredQuality: widget.preferredQuality,
       );
     } catch (e) {
       if (mounted) {
@@ -88,7 +102,6 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
     }
   }
 
-  /// Safely navigate away exactly once, deferred to after the current frame.
   void _navigateAway() {
     if (_hasNavigatedAway) return;
     _hasNavigatedAway = true;
@@ -103,10 +116,12 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   void _onUpdate() {
     if (!mounted) return;
     setState(() {});
-
-    // If host disconnected, navigate viewer away after the frame
-    if (!_controller.isLive) {
-      _navigateAway();
+    // When the host ends the stream, show the "Live has ended" overlay for
+    // 2 seconds so the viewer sees feedback instead of a sudden black screen,
+    // then navigate away.
+    if (!_controller.isLive && !_liveEnded && !_hasNavigatedAway) {
+      setState(() => _liveEnded = true);
+      Future.delayed(const Duration(seconds: 2), _navigateAway);
     }
   }
 
@@ -124,19 +139,24 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
 
   @override
   Widget build(BuildContext context) {
-    final mediaQuery = MediaQuery.of(context);
-    final bottomPadding = mediaQuery.padding.bottom;
+    final mq = MediaQuery.of(context);
+    final bottomPad = mq.padding.bottom;
     final remoteParticipants = _controller.livekitService.remoteParticipants;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Host video (full screen)
+          // ── Host video ─────────────────────────────────────────────────
+          // RepaintBoundary keeps video texture repaints isolated from the
+          // overlay widgets (comments, reactions, top bar) so they don't
+          // trigger unnecessary re-renders when video frames arrive.
           if (remoteParticipants.isNotEmpty)
             Positioned.fill(
-              child: _RemoteVideoView(
-                participant: remoteParticipants.first,
+              child: RepaintBoundary(
+                child: _RemoteVideoView(
+                  participant: remoteParticipants.first,
+                ),
               ),
             )
           else
@@ -146,36 +166,41 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                 children: [
                   CircleAvatar(
                     radius: 40,
-                    backgroundColor: SdkTheme.primaryPink.withValues(alpha: 0.3),
+                    backgroundColor:
+                        SdkTheme.primaryPink.withValues(alpha: 0.3),
                     backgroundImage: widget.hostAvatar != null
                         ? NetworkImage(widget.hostAvatar!)
                         : null,
                     child: widget.hostAvatar == null
-                        ? const Icon(Icons.person, color: Colors.white, size: 40)
+                        ? const Icon(Icons.person,
+                            color: Colors.white, size: 40)
                         : null,
                   ),
                   const SizedBox(height: 16),
                   Text(
                     'Waiting for host...',
-                    style: SdkTheme.bodyMedium.copyWith(color: Colors.white54),
+                    style: SdkTheme.bodyMedium
+                        .copyWith(color: Colors.white54),
                   ),
                 ],
               ),
             ),
 
-          // Top bar
+          // ── Top bar ────────────────────────────────────────────────────
           Positioned(
-            top: mediaQuery.padding.top + 8,
+            top: mq.padding.top + 8,
             left: 12,
             right: 12,
             child: Row(
               children: [
                 // Host info
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+                    borderRadius:
+                        BorderRadius.circular(SdkTheme.radiusRound),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -186,7 +211,8 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                             ? NetworkImage(widget.hostAvatar!)
                             : null,
                         child: widget.hostAvatar == null
-                            ? const Icon(Icons.person, size: 14, color: Colors.white)
+                            ? const Icon(Icons.person,
+                                size: 14, color: Colors.white)
                             : null,
                       ),
                       const SizedBox(width: 8),
@@ -200,25 +226,30 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                 const SizedBox(width: 8),
                 // LIVE badge
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     gradient: SdkTheme.liveGradient,
-                    borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+                    borderRadius:
+                        BorderRadius.circular(SdkTheme.radiusRound),
                   ),
                   child: const Text('LIVE', style: SdkTheme.labelBold),
                 ),
                 const SizedBox(width: 8),
                 // Viewer count
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+                    borderRadius:
+                        BorderRadius.circular(SdkTheme.radiusRound),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.visibility, color: Colors.white, size: 14),
+                      const Icon(Icons.visibility,
+                          color: Colors.white, size: 14),
                       const SizedBox(width: 4),
                       Text(
                         '${_controller.viewerCount}',
@@ -228,7 +259,6 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                   ),
                 ),
                 const Spacer(),
-                // Close button
                 GestureDetector(
                   onTap: _leaveStream,
                   child: Container(
@@ -237,38 +267,39 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                       color: Colors.black.withValues(alpha: 0.5),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.close, color: Colors.white, size: 22),
+                    child: const Icon(Icons.close,
+                        color: Colors.white, size: 22),
                   ),
                 ),
               ],
             ),
           ),
 
-          // Reaction animation (right side)
+          // ── Reaction animations ────────────────────────────────────────
           Positioned(
             right: 8,
-            bottom: 160 + bottomPadding,
-            child: ReactionAnimation(reactions: _controller.pendingReactions),
+            bottom: 160 + bottomPad,
+            child: ReactionAnimation(
+                reactions: _controller.pendingReactions),
           ),
 
-          // Comments overlay
+          // ── Comments overlay ───────────────────────────────────────────
           Positioned(
             left: 0,
             right: 80,
-            bottom: 100 + bottomPadding,
+            bottom: 100 + bottomPad,
             child: CommentOverlay(comments: _controller.comments),
           ),
 
-          // Bottom area: comment input + reaction button
+          // ── Bottom: comment input + reaction bar ───────────────────────
           Positioned(
             left: 12,
             right: 12,
-            bottom: 16 + bottomPadding,
+            bottom: 16 + bottomPad,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                // Reaction bar (toggle)
                 if (_showReactionBar)
                   Padding(
                     padding: const EdgeInsets.only(bottom: 8),
@@ -281,29 +312,23 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                   ),
                 Row(
                   children: [
-                    // Comment input
                     Expanded(
                       child: CommentInput(
                         onSubmit: _controller.sendComment,
                       ),
                     ),
                     const SizedBox(width: 10),
-                    // Reaction toggle
                     GestureDetector(
-                      onTap: () {
-                        setState(() => _showReactionBar = !_showReactionBar);
-                      },
+                      onTap: () => setState(
+                          () => _showReactionBar = !_showReactionBar),
                       child: Container(
                         padding: const EdgeInsets.all(12),
                         decoration: BoxDecoration(
                           color: SdkTheme.primaryRed.withValues(alpha: 0.9),
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(
-                          Icons.favorite,
-                          color: Colors.white,
-                          size: 22,
-                        ),
+                        child: const Icon(Icons.favorite,
+                            color: Colors.white, size: 22),
                       ),
                     ),
                   ],
@@ -311,13 +336,63 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
               ],
             ),
           ),
+
+          // ── Live ended overlay ─────────────────────────────────────────
+          // Shown when the host ends the broadcast so the viewer always
+          // sees feedback instead of a black screen while the pop animates.
+          if (_liveEnded)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.75),
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: const BoxDecoration(
+                          color: SdkTheme.endCallRed,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.live_tv,
+                            color: Colors.white, size: 36),
+                      ),
+                      const SizedBox(height: 20),
+                      const Text(
+                        'Live has ended',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'The host has ended the broadcast',
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.6),
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 }
 
-/// Helper widget to render remote video.
+// ─────────────────────────────────────────────────────────────────────────────
+// Remote video renderer
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Renders the host's video track received by the viewer.
+///
+/// [VideoRenderMode.auto] lets the platform use hardware-accelerated decode,
+/// keeping video processing off the main isolate.
 class _RemoteVideoView extends StatelessWidget {
   final RemoteParticipant participant;
 
@@ -325,7 +400,9 @@ class _RemoteVideoView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final videoTrack = participant.videoTrackPublications.firstOrNull?.track;
+    final videoTrack =
+        participant.videoTrackPublications.firstOrNull?.track;
+
     if (videoTrack == null) {
       return Container(
         color: SdkTheme.backgroundDark,
@@ -334,6 +411,10 @@ class _RemoteVideoView extends StatelessWidget {
         ),
       );
     }
-    return VideoTrackRenderer(videoTrack as VideoTrack);
+
+    return VideoTrackRenderer(
+      videoTrack as VideoTrack,
+      renderMode: VideoRenderMode.auto,
+    );
   }
 }

@@ -8,6 +8,13 @@ import 'reaction_animation.dart';
 
 /// Full-screen live broadcast host screen.
 ///
+/// Performance optimisations for low-resource VPS:
+///  - [RepaintBoundary] around the video layer prevents GPU repaints from
+///    propagating into the UI overlay layer and vice-versa.
+///  - [VideoViewMirrorMode.mirror] gives the host a natural selfie preview
+///    without extra CPU-side flipping.
+///  - [VideoRenderMode.auto] lets the platform pick hardware decode.
+///
 /// Usage:
 /// ```dart
 /// Navigator.push(context, MaterialPageRoute(
@@ -90,10 +97,8 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
     final duration = _startTime != null
         ? DateTime.now().difference(_startTime!)
         : Duration.zero;
-
     await _controller.stopBroadcast();
     widget.onLiveEnded?.call(duration);
-
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -113,11 +118,13 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel', style: TextStyle(color: Colors.white54)),
+            child:
+                const Text('Cancel', style: TextStyle(color: Colors.white54)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('End', style: TextStyle(color: SdkTheme.primaryRed)),
+            child: const Text('End',
+                style: TextStyle(color: SdkTheme.primaryRed)),
           ),
         ],
       ),
@@ -134,22 +141,28 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
 
   @override
   Widget build(BuildContext context) {
-    final mediaQuery = MediaQuery.of(context);
-    final bottomPadding = mediaQuery.padding.bottom;
+    final mq = MediaQuery.of(context);
+    final bottomPad = mq.padding.bottom;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // Camera preview (full screen)
+          // ── Camera preview ─────────────────────────────────────────────
+          // RepaintBoundary isolates the video texture repaints from the
+          // overlay widgets. Without this, every video frame invalidates
+          // the entire Stack, causing unnecessary UI redraws.
           if (_controller.livekitService.localParticipant != null)
             Positioned.fill(
-              child: _LocalVideoView(
-                participant: _controller.livekitService.localParticipant!,
+              child: RepaintBoundary(
+                child: _LocalVideoView(
+                  participant:
+                      _controller.livekitService.localParticipant!,
+                ),
               ),
             ),
 
-          // If camera is off, show avatar
+          // Camera-off fallback
           if (_controller.isCameraOff)
             Center(
               child: Column(
@@ -157,7 +170,8 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                 children: [
                   CircleAvatar(
                     radius: 50,
-                    backgroundColor: SdkTheme.primaryPink.withValues(alpha: 0.3),
+                    backgroundColor:
+                        SdkTheme.primaryPink.withValues(alpha: 0.3),
                     backgroundImage: widget.avatarUrl != null
                         ? NetworkImage(widget.avatarUrl!)
                         : null,
@@ -175,25 +189,28 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                   const SizedBox(height: 16),
                   Text(
                     'Camera Off',
-                    style: SdkTheme.bodyMedium.copyWith(color: Colors.white54),
+                    style:
+                        SdkTheme.bodyMedium.copyWith(color: Colors.white54),
                   ),
                 ],
               ),
             ),
 
-          // Top bar
+          // ── Top bar ────────────────────────────────────────────────────
           Positioned(
-            top: mediaQuery.padding.top + 8,
+            top: mq.padding.top + 8,
             left: 12,
             right: 12,
             child: Row(
               children: [
                 // LIVE badge
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     gradient: SdkTheme.liveGradient,
-                    borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+                    borderRadius:
+                        BorderRadius.circular(SdkTheme.radiusRound),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -214,15 +231,18 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                 const SizedBox(width: 10),
                 // Viewer count
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+                    borderRadius:
+                        BorderRadius.circular(SdkTheme.radiusRound),
                   ),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.visibility, color: Colors.white, size: 16),
+                      const Icon(Icons.visibility,
+                          color: Colors.white, size: 16),
                       const SizedBox(width: 4),
                       Text(
                         '${_controller.viewerCount}',
@@ -241,49 +261,48 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                       color: Colors.black.withValues(alpha: 0.5),
                       shape: BoxShape.circle,
                     ),
-                    child: const Icon(Icons.close, color: Colors.white, size: 22),
+                    child: const Icon(Icons.close,
+                        color: Colors.white, size: 22),
                   ),
                 ),
               ],
             ),
           ),
 
-          // Reaction animations (right side)
+          // ── Reaction animations ────────────────────────────────────────
           Positioned(
             right: 8,
-            bottom: 160 + bottomPadding,
-            child: ReactionAnimation(reactions: _controller.pendingReactions),
+            bottom: 160 + bottomPad,
+            child: ReactionAnimation(
+                reactions: _controller.pendingReactions),
           ),
 
-          // Comments overlay
+          // ── Comments overlay ───────────────────────────────────────────
           Positioned(
             left: 0,
             right: 80,
-            bottom: 100 + bottomPadding,
+            bottom: 100 + bottomPad,
             child: CommentOverlay(comments: _controller.comments),
           ),
 
-          // Bottom controls
+          // ── Bottom controls ────────────────────────────────────────────
           Positioned(
             left: 12,
             right: 12,
-            bottom: 20 + bottomPadding,
+            bottom: 20 + bottomPad,
             child: Row(
               children: [
-                // Flip camera
                 _ControlButton(
                   icon: Icons.flip_camera_ios_rounded,
                   onTap: _controller.switchCamera,
                 ),
                 const SizedBox(width: 12),
-                // Mute toggle
                 _ControlButton(
                   icon: _controller.isMuted ? Icons.mic_off : Icons.mic,
                   isActive: _controller.isMuted,
                   onTap: _controller.toggleMute,
                 ),
                 const SizedBox(width: 12),
-                // Camera toggle
                 _ControlButton(
                   icon: _controller.isCameraOff
                       ? Icons.videocam_off
@@ -292,17 +311,15 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                   onTap: _controller.toggleCamera,
                 ),
                 const Spacer(),
-                // End stream button
                 GestureDetector(
                   onTap: _confirmEnd,
                   child: Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 10,
-                    ),
+                        horizontal: 20, vertical: 10),
                     decoration: BoxDecoration(
                       color: SdkTheme.endCallRed,
-                      borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+                      borderRadius:
+                          BorderRadius.circular(SdkTheme.radiusRound),
                     ),
                     child: const Text('END', style: SdkTheme.labelBold),
                   ),
@@ -316,7 +333,19 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
   }
 }
 
-/// Helper widget to render local video.
+// ─────────────────────────────────────────────────────────────────────────────
+// Local video renderer
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Renders the host's own camera track.
+///
+/// [VideoViewMirrorMode.mirror] flips the image horizontally for a natural
+/// selfie view — this is done in the GPU pipeline so it costs essentially zero
+/// extra CPU compared to software flipping.
+///
+/// [VideoRenderMode.auto] tells the platform renderer to prefer hardware decode
+/// (VideoToolbox on iOS, MediaCodec on Android), which keeps video decoding
+/// off the main thread.
 class _LocalVideoView extends StatelessWidget {
   final LocalParticipant participant;
 
@@ -324,15 +353,22 @@ class _LocalVideoView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final videoTrack = participant.videoTrackPublications.firstOrNull?.track;
-    if (videoTrack == null) {
-      return const SizedBox.shrink();
-    }
-    return VideoTrackRenderer(videoTrack as VideoTrack);
+    final videoTrack =
+        participant.videoTrackPublications.firstOrNull?.track;
+    if (videoTrack == null) return const SizedBox.shrink();
+
+    return VideoTrackRenderer(
+      videoTrack as VideoTrack,
+      mirrorMode: VideoViewMirrorMode.mirror,
+      renderMode: VideoRenderMode.auto,
+    );
   }
 }
 
-/// Circular control button used in bottom bars.
+// ─────────────────────────────────────────────────────────────────────────────
+// Control button
+// ─────────────────────────────────────────────────────────────────────────────
+
 class _ControlButton extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
@@ -362,7 +398,10 @@ class _ControlButton extends StatelessWidget {
   }
 }
 
-/// Config holder (set during SDK init).
+// ─────────────────────────────────────────────────────────────────────────────
+// SDK config holder
+// ─────────────────────────────────────────────────────────────────────────────
+
 class SocialIqLiveSdkConfig {
   static String serverUrl = '';
   static String socketUrl = '';
