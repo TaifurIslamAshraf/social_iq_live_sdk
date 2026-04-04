@@ -112,14 +112,19 @@ class SocketService extends ChangeNotifier {
     _socket?.emit('register_user', {'userId': userId});
   }
 
+  /// Notify server that host is starting a live broadcast.
+  void startLive(String roomName, String userId) {
+    _socket?.emit('start_live', {'room': roomName, 'userId': userId});
+  }
+
   /// Join a live stream room on socket.
-  void joinLiveRoom(String roomName) {
-    _socket?.emit('join_live', {'room': roomName});
+  void joinLiveRoom(String roomName, String userId) {
+    _socket?.emit('join_live', {'room': roomName, 'userId': userId});
   }
 
   /// Leave a live stream room on socket.
-  void leaveLiveRoom(String roomName) {
-    _socket?.emit('leave_live', {'room': roomName});
+  void leaveLiveRoom(String roomName, String userId, {bool isHost = false}) {
+    _socket?.emit('leave_live', {'room': roomName, 'userId': userId, 'isHost': isHost});
   }
 
   /// Send a comment to the live stream.

@@ -111,7 +111,8 @@ class LiveController extends ChangeNotifier {
 
       _setupSocketListeners();
       _socketService.connect(url: socketUrl, authToken: userToken);
-      _socketService.joinLiveRoom(_roomName!);
+      _socketService.joinLiveRoom(_roomName!, identity);
+      _socketService.startLive(_roomName!, identity);
 
       _isLive = true;
       _livekitService.addListener(_onLiveKitUpdate);
@@ -168,7 +169,7 @@ class LiveController extends ChangeNotifier {
 
       _setupSocketListeners();
       _socketService.connect(url: socketUrl, authToken: userToken);
-      _socketService.joinLiveRoom(roomName);
+      _socketService.joinLiveRoom(roomName, identity);
 
       _isLive = true;
       _livekitService.addListener(_onLiveKitUpdate);
@@ -266,7 +267,7 @@ class LiveController extends ChangeNotifier {
     _isLive = false;
 
     if (_roomName != null) {
-      _socketService.leaveLiveRoom(_roomName!);
+      _socketService.leaveLiveRoom(_roomName!, _identity ?? '', isHost: _isHost);
 
       if (_isHost) {
         try {
@@ -313,7 +314,9 @@ class LiveController extends ChangeNotifier {
 
   void _setupSocketListeners() {
     _connectSub = _socketService.onConnect.listen((_) {
-      if (_roomName != null) _socketService.joinLiveRoom(_roomName!);
+      if (_roomName != null && _identity != null) {
+        _socketService.joinLiveRoom(_roomName!, _identity!);
+      }
     });
 
     _commentSub = _socketService.onComment.listen((data) {

@@ -110,6 +110,17 @@ class ApiService {
     return _handleResponse(response);
   }
 
+  /// Get all currently active live rooms.
+  Future<Map<String, dynamic>> getLiveRooms() async {
+    final response = await http
+        .get(
+          Uri.parse('$baseUrl/v1/api/live/rooms'),
+          headers: _headers,
+        )
+        .timeout(_timeout);
+    return _handleResponse(response);
+  }
+
   /// End a live broadcast room.
   Future<Map<String, dynamic>> endLive({required String roomName}) async {
     final response = await http
