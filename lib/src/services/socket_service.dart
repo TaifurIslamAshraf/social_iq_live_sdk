@@ -15,6 +15,11 @@ class SocketService extends ChangeNotifier {
   final _viewerCountController = StreamController<int>.broadcast();
   final _connectController = StreamController<void>.broadcast(); // fires on (re)connect
 
+  /// Emits the full live rooms list whenever the server pushes a `live_rooms_update` event.
+  /// Payload shape: `{ status, total, rooms: [ { room_name, host_uid, host_name,
+  ///   host_profile_picture, viewer_count, viewer_uids, started_at } ] }`
+  final _liveRoomsController = StreamController<Map<String, dynamic>>.broadcast();
+
   // Stream controllers for call signaling
   final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
   final _callAcceptedController = StreamController<Map<String, dynamic>>.broadcast();
@@ -25,6 +30,11 @@ class SocketService extends ChangeNotifier {
   Stream<Map<String, dynamic>> get onReaction => _reactionController.stream;
   Stream<int> get onViewerCountUpdate => _viewerCountController.stream;
   Stream<void> get onConnect => _connectController.stream;  // fires on every connect/reconnect
+
+  /// Realtime stream of live rooms. Listen to this instead of polling [ApiService.getLiveRooms].
+  /// The server broadcasts an update on every host start/end and viewer join/leave.
+  Stream<Map<String, dynamic>> get onLiveRoomsUpdate => _liveRoomsController.stream;
+
   Stream<Map<String, dynamic>> get onIncomingCall => _incomingCallController.stream;
   Stream<Map<String, dynamic>> get onCallAccepted => _callAcceptedController.stream;
   Stream<Map<String, dynamic>> get onCallRejected => _callRejectedController.stream;
@@ -74,6 +84,14 @@ class SocketService extends ChangeNotifier {
         _viewerCountController.add(data);
       } else if (data is Map && data['count'] != null) {
         _viewerCountController.add(data['count'] as int);
+      }
+    });
+
+    // Realtime live rooms list — emitted globally by the server on any rooms mutation
+    _socket!.on('live_rooms_update', (data) {
+      if (data is Map) {
+        debugPrint('[SocketService] live_rooms_update: ${data['total']} room(s)');
+        _liveRoomsController.add(Map<String, dynamic>.from(data));
       }
     });
 
@@ -218,6 +236,7 @@ class SocketService extends ChangeNotifier {
     _reactionController.close();
     _viewerCountController.close();
     _connectController.close();
+    _liveRoomsController.close();
     _incomingCallController.close();
     _callAcceptedController.close();
     _callRejectedController.close();

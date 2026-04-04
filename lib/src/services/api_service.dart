@@ -110,7 +110,24 @@ class ApiService {
     return _handleResponse(response);
   }
 
-  /// Get all currently active live rooms.
+  /// Fetches the current snapshot of all active live rooms (one-shot HTTP call).
+  ///
+  /// Use this **once** on screen load to seed the initial list.
+  /// Then subscribe to [SocketService.onLiveRoomsUpdate] for realtime push
+  /// updates — the server emits `live_rooms_update` whenever a host goes live,
+  /// ends a broadcast, or a viewer joins/leaves.
+  ///
+  /// Example:
+  /// ```dart
+  /// // 1. Seed initial list
+  /// final data = await apiService.getLiveRooms();
+  /// setState(() => _rooms = List<Map<String, dynamic>>.from(data['rooms']));
+  ///
+  /// // 2. Subscribe to realtime updates (no polling needed)
+  /// socketService.onLiveRoomsUpdate.listen((data) {
+  ///   setState(() => _rooms = List<Map<String, dynamic>>.from(data['rooms']));
+  /// });
+  /// ```
   Future<Map<String, dynamic>> getLiveRooms() async {
     final response = await http
         .get(
