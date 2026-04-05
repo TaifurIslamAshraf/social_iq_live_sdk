@@ -36,6 +36,9 @@ class LiveBroadcastHost extends StatefulWidget {
   final String? title;
   final ValueChanged<Duration>? onLiveEnded;
 
+  /// Called once the live broadcast has successfully started.
+  final VoidCallback? onLiveStarted;
+
   const LiveBroadcastHost({
     super.key,
     required this.userToken,
@@ -44,6 +47,7 @@ class LiveBroadcastHost extends StatefulWidget {
     this.avatarUrl,
     this.title,
     this.onLiveEnded,
+    this.onLiveStarted,
   });
 
   @override
@@ -144,7 +148,12 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
     final mq = MediaQuery.of(context);
     final bottomPad = mq.padding.bottom;
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmEnd();
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
@@ -329,6 +338,7 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
           ),
         ],
       ),
+    ),
     );
   }
 }
