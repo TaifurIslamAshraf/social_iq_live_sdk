@@ -62,6 +62,9 @@ class SocketService extends ChangeNotifier {
       _connectController.add(null); // notify listeners of (re)connect
       debugPrint('[SocketService] Connected');
       notifyListeners();
+      // Request current live rooms immediately so onLiveRoomsUpdate fires
+      // without needing a separate HTTP call.
+      _socket?.emit('get_live_rooms', {});
     });
 
     _socket!.onDisconnect((_) {
@@ -143,6 +146,12 @@ class SocketService extends ChangeNotifier {
   /// Leave a live stream room on socket.
   void leaveLiveRoom(String roomName, String userId, {bool isHost = false}) {
     _socket?.emit('leave_live', {'room': roomName, 'userId': userId, 'isHost': isHost});
+  }
+
+  /// Ask the server to push the current live rooms list via [onLiveRoomsUpdate].
+  /// Useful if you want a manual refresh without an HTTP call.
+  void requestLiveRooms() {
+    _socket?.emit('get_live_rooms', {});
   }
 
   /// Send a comment to the live stream.
