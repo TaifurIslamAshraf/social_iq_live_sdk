@@ -40,6 +40,13 @@ class LiveBroadcastViewer extends StatefulWidget {
   final String? hostAvatar;
   final VoidCallback? onLiveEnded;
 
+  /// Called once the viewer has successfully joined the live stream.
+  final VoidCallback? onLiveViewStarted;
+
+  /// Called when the viewer leaves the stream — either by pressing the close
+  /// button or because the host ended the broadcast.
+  final VoidCallback? onLiveViewLeave;
+
   /// Override the default subscription quality.
   /// Use [VideoQuality.LOW] on very slow connections to save server bandwidth.
   final VideoQuality preferredQuality;
@@ -54,6 +61,8 @@ class LiveBroadcastViewer extends StatefulWidget {
     this.hostName,
     this.hostAvatar,
     this.onLiveEnded,
+    this.onLiveViewStarted,
+    this.onLiveViewLeave,
     this.preferredQuality = VideoQuality.MEDIUM, // ← reduced default
   });
 
@@ -89,6 +98,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
         socketUrl: SocialIqLiveSdkConfig.socketUrl,
         preferredQuality: widget.preferredQuality,
       );
+      widget.onLiveViewStarted?.call();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -105,6 +115,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   void _navigateAway() {
     if (_hasNavigatedAway) return;
     _hasNavigatedAway = true;
+    widget.onLiveViewLeave?.call();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         widget.onLiveEnded?.call();
