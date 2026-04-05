@@ -153,13 +153,14 @@ class LiveController extends ChangeNotifier {
         room: roomName,
       );
 
-      // Viewers don't publish — mode only affects subscribe behaviour here.
+      // Viewers don't publish — use videoCall mode to avoid forcing loudspeaker
+      // routing that would let mic leak bleed back to the host as echo.
       await _livekitService.connect(
         url: tokenData['livekitUrl'] ?? livekitUrl,
         token: tokenData['token'],
         enableCamera: false,
         enableMicrophone: false,
-        mode: StreamMode.livestream,
+        mode: StreamMode.videoCall,
       );
 
       // Downgrade subscription quality for every existing remote participant.

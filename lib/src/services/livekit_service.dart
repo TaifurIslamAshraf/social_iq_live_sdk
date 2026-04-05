@@ -160,10 +160,6 @@ class LiveKitService extends ChangeNotifier {
     await _room!.connect(url, token);
     _localParticipant = _room!.localParticipant;
 
-    // Confirm routing after connect (must match defaultAudioOutputOptions
-    // above — changing it here would de-sync the AEC reference).
-    await _room!.setSpeakerOn(useSpeaker);
-
     if (enableCamera && mode != StreamMode.audioCall) {
       await _localParticipant?.setCameraEnabled(true);
       _isCameraEnabled = true;
@@ -175,6 +171,7 @@ class LiveKitService extends ChangeNotifier {
       await _localParticipant?.setMicrophoneEnabled(true);
       _isMicEnabled = true;
     } else {
+      await _localParticipant?.setMicrophoneEnabled(false);
       _isMicEnabled = false;
     }
 
