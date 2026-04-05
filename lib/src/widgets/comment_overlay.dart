@@ -25,7 +25,9 @@ class _CommentOverlayState extends State<CommentOverlay> {
   @override
   void didUpdateWidget(CommentOverlay oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.comments.length > oldWidget.comments.length) {
+    // Scroll on new comments OR on any rebuild triggered by unrelated state
+    // changes (e.g. mic/camera toggle) so the latest comment stays visible.
+    if (widget.comments.isNotEmpty) {
       _scrollToBottom();
     }
   }

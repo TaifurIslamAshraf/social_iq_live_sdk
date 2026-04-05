@@ -290,9 +290,14 @@ class LiveController extends ChangeNotifier {
   // ── Internal ──────────────────────────────────────────────────────────────
 
   void _onLiveKitUpdate() {
-    _viewerCount = _isHost
-        ? _livekitService.remoteParticipants.length
-        : _livekitService.participantCount;
+    // For viewers, keep participant count in sync with LiveKit.
+    // For the host, viewer count is sourced exclusively from the socket
+    // (_viewerCountSub) — LiveKit's remoteParticipants can transiently return
+    // 0 during local track events (mic/camera toggle) and must not overwrite
+    // the socket-authoritative value.
+    if (!_isHost) {
+      _viewerCount = _livekitService.participantCount;
+    }
 
     // Detect host disconnection for viewers.
     // Two cases trigger this:
