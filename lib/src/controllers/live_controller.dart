@@ -34,6 +34,8 @@ class LiveController extends ChangeNotifier {
   String? _displayName;
   String? _avatarUrl;
 
+  VideoQuality _preferredQuality = VideoQuality.MEDIUM;
+
   StreamSubscription? _connectSub;
   StreamSubscription? _commentSub;
   StreamSubscription? _reactionSub;
@@ -110,8 +112,9 @@ class LiveController extends ChangeNotifier {
       );
 
       _setupSocketListeners();
+      // NOTE: do NOT call joinLiveRoom here — _connectSub fires for the
+      // initial connect event and handles it (avoids emitting join_live twice).
       _socketService.connect(url: socketUrl, authToken: userToken);
-      _socketService.joinLiveRoom(_roomName!, identity);
       _socketService.startLive(_roomName!, identity);
 
       _isLive = true;
@@ -144,6 +147,7 @@ class LiveController extends ChangeNotifier {
     _avatarUrl = avatarUrl;
     _roomName = roomName;
 
+    _preferredQuality = preferredQuality;
     _apiService.setAuthToken(userToken);
 
     try {
@@ -169,8 +173,9 @@ class LiveController extends ChangeNotifier {
       }
 
       _setupSocketListeners();
+      // NOTE: do NOT call joinLiveRoom here — _connectSub fires for the
+      // initial connect event and handles it (avoids emitting join_live twice).
       _socketService.connect(url: socketUrl, authToken: userToken);
-      _socketService.joinLiveRoom(roomName, identity);
 
       _isLive = true;
       _livekitService.addListener(_onLiveKitUpdate);
@@ -297,6 +302,13 @@ class LiveController extends ChangeNotifier {
     // the socket-authoritative value.
     if (!_isHost) {
       _viewerCount = _livekitService.participantCount;
+
+      // Re-apply preferred quality on every LiveKit update so that tracks
+      // subscribed after the initial join (e.g. host enables camera late) also
+      // get the correct quality setting — not just those present at join time.
+      for (final p in _livekitService.remoteParticipants) {
+        _livekitService.setPreferredVideoQuality(p, _preferredQuality);
+      }
     }
 
     // Detect host disconnection for viewers.

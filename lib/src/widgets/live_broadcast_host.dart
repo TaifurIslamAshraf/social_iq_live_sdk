@@ -57,6 +57,7 @@ class LiveBroadcastHost extends StatefulWidget {
 class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
   late final LiveController _controller;
   DateTime? _startTime;
+  bool _isConnecting = true; // true while WebRTC handshake is in progress
 
   @override
   void initState() {
@@ -80,8 +81,10 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
         socketUrl: SocialIqLiveSdkConfig.socketUrl,
       );
       _startTime = DateTime.now();
+      if (mounted) setState(() => _isConnecting = false);
     } catch (e) {
       if (mounted) {
+        setState(() => _isConnecting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to start live: $e'),
@@ -161,7 +164,26 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
           // RepaintBoundary isolates the video texture repaints from the
           // overlay widgets. Without this, every video frame invalidates
           // the entire Stack, causing unnecessary UI redraws.
-          if (_controller.livekitService.localParticipant != null)
+          if (_isConnecting)
+            // Shown while the WebRTC handshake is in progress.
+            // LiveKit first tries UDP (50000-60000); if those ports are
+            // firewalled it falls back to TCP after ~10-12 s.
+            const Positioned.fill(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(color: Colors.white70),
+                    SizedBox(height: 16),
+                    Text(
+                      'Starting broadcast...',
+                      style: TextStyle(color: Colors.white54, fontSize: 14),
+                    ),
+                  ],
+                ),
+              ),
+            )
+          else if (_controller.livekitService.localParticipant != null)
             Positioned.fill(
               child: RepaintBoundary(
                 child: _LocalVideoView(
@@ -172,7 +194,7 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
             ),
 
           // Camera-off fallback
-          if (_controller.isCameraOff)
+          if (!_isConnecting && _controller.isCameraOff)
             Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,

@@ -2,6 +2,14 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:livekit_client/livekit_client.dart';
 
+/// How long [connect] waits before giving up on the LiveKit handshake.
+///
+/// LiveKit first attempts UDP (ports 50000-60000). If those ports are blocked
+/// by a firewall, the client waits ~10-12 s before falling back to TCP.
+/// Setting a ceiling here ensures callers get a [TimeoutException] instead of
+/// hanging forever if both transports fail (e.g. during a complete network outage).
+const Duration _kConnectTimeout = Duration(seconds: 20);
+
 /// Describes how this connection will be used.
 /// Different modes apply different video quality / bitrate constraints
 /// to protect the single-CPU VPS from being overwhelmed.
@@ -157,7 +165,14 @@ class LiveKitService extends ChangeNotifier {
     _listener = _room!.createListener();
     _setupListeners();
 
-    await _room!.connect(url, token);
+    await _room!.connect(url, token).timeout(
+      _kConnectTimeout,
+      onTimeout: () => throw TimeoutException(
+        'LiveKit connection timed out after ${_kConnectTimeout.inSeconds} s. '
+        'UDP ports 50000-60000 may be blocked — check firewall rules or '
+        'enable the embedded TURN server in livekit config.yaml.',
+      ),
+    );
     _localParticipant = _room!.localParticipant;
 
     if (enableCamera && mode != StreamMode.audioCall) {

@@ -75,6 +75,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   bool _showReactionBar = false;
   bool _hasNavigatedAway = false;
   bool _liveEnded = false; // true once host ends stream; shows overlay before pop
+  bool _isConnecting = true; // true while WebRTC handshake is in progress
 
   @override
   void initState() {
@@ -98,9 +99,11 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
         socketUrl: SocialIqLiveSdkConfig.socketUrl,
         preferredQuality: widget.preferredQuality,
       );
+      if (mounted) setState(() => _isConnecting = false);
       widget.onLiveViewStarted?.call();
     } catch (e) {
       if (mounted) {
+        setState(() => _isConnecting = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to join live: $e'),
@@ -168,6 +171,24 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                 child: _RemoteVideoView(
                   participant: remoteParticipants.first,
                 ),
+              ),
+            )
+          else if (_isConnecting)
+            // Shown while the WebRTC handshake is in progress.
+            // LiveKit first tries UDP (50000-60000); if those ports are
+            // firewalled it falls back to TCP after ~10-12 s.  The spinner
+            // makes this wait visible so it doesn't look like a crash.
+            const Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  CircularProgressIndicator(color: Colors.white70),
+                  SizedBox(height: 16),
+                  Text(
+                    'Connecting...',
+                    style: TextStyle(color: Colors.white54, fontSize: 14),
+                  ),
+                ],
               ),
             )
           else
