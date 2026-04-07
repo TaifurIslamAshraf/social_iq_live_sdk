@@ -187,8 +187,8 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
             Positioned.fill(
               child: RepaintBoundary(
                 child: _LocalVideoView(
-                  participant:
-                      _controller.livekitService.localParticipant!,
+                  participant: _controller.livekitService.localParticipant!,
+                  isFrontCamera: _controller.livekitService.isFrontCamera,
                 ),
               ),
             ),
@@ -381,7 +381,13 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
 class _LocalVideoView extends StatelessWidget {
   final LocalParticipant participant;
 
-  const _LocalVideoView({required this.participant});
+  /// Mirror only for front camera — back camera must not be flipped.
+  final bool isFrontCamera;
+
+  const _LocalVideoView({
+    required this.participant,
+    required this.isFrontCamera,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -391,7 +397,9 @@ class _LocalVideoView extends StatelessWidget {
 
     return VideoTrackRenderer(
       videoTrack as VideoTrack,
-      mirrorMode: VideoViewMirrorMode.mirror,
+      mirrorMode: isFrontCamera
+          ? VideoViewMirrorMode.mirror
+          : VideoViewMirrorMode.off,
       renderMode: VideoRenderMode.auto,
     );
   }

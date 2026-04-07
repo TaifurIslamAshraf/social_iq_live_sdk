@@ -34,6 +34,7 @@ class LiveKitService extends ChangeNotifier {
   bool _isMicEnabled = true;
   bool _isCameraEnabled = true;
   StreamMode _currentMode = StreamMode.livestream;
+  CameraPosition _currentCameraPosition = CameraPosition.front;
 
   // Public getters
   Room? get room => _room;
@@ -42,6 +43,8 @@ class LiveKitService extends ChangeNotifier {
   bool get isMicEnabled => _isMicEnabled;
   bool get isCameraEnabled => _isCameraEnabled;
   StreamMode get currentMode => _currentMode;
+  CameraPosition get currentCameraPosition => _currentCameraPosition;
+  bool get isFrontCamera => _currentCameraPosition == CameraPosition.front;
 
   List<RemoteParticipant> get remoteParticipants =>
       _room?.remoteParticipants.values.toList() ?? [];
@@ -233,6 +236,8 @@ class LiveKitService extends ChangeNotifier {
                   ? CameraPosition.back
                   : CameraPosition.front;
           await videoTrack.setCameraPosition(newPosition);
+          _currentCameraPosition = newPosition;
+          notifyListeners();
         }
       } catch (e) {
         debugPrint('Failed to switch camera: $e');
