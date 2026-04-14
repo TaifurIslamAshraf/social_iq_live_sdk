@@ -333,14 +333,6 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                   isActive: _controller.isMuted,
                   onTap: _controller.toggleMute,
                 ),
-                const SizedBox(width: 12),
-                _ControlButton(
-                  icon: _controller.isCameraOff
-                      ? Icons.videocam_off
-                      : Icons.videocam,
-                  isActive: _controller.isCameraOff,
-                  onTap: _controller.toggleCamera,
-                ),
                 const Spacer(),
                 GestureDetector(
                   onTap: _confirmEnd,

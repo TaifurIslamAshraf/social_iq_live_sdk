@@ -157,7 +157,13 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
     final bottomPad = mq.padding.bottom;
     final remoteParticipants = _controller.livekitService.remoteParticipants;
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        _leaveStream();
+      },
+      child: Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
@@ -412,6 +418,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
               ),
             ),
         ],
+      ),
       ),
     );
   }
