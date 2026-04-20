@@ -25,6 +25,8 @@ class VideoCallScreen extends StatefulWidget {
   final String userToken;
   final String callerId;
   final String receiverId;
+  final String? callerName;
+  final String? callerAvatar;
   final String? receiverName;
   final String? receiverAvatar;
   final String? roomName;
@@ -33,18 +35,22 @@ class VideoCallScreen extends StatefulWidget {
   /// Set true if answering an incoming call.
   final bool isIncoming;
   final String? incomingCallerName;
+  final String? incomingCallerAvatar;
 
   const VideoCallScreen({
     super.key,
     required this.userToken,
     required this.callerId,
     required this.receiverId,
+    this.callerName,
+    this.callerAvatar,
     this.receiverName,
     this.receiverAvatar,
     this.roomName,
     this.onCallEnded,
     this.isIncoming = false,
     this.incomingCallerName,
+    this.incomingCallerAvatar,
   });
 
   @override
@@ -66,7 +72,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   Future<void> _startCall() async {
     try {
-      final room = widget.roomName ?? 'call_${widget.callerId}_${widget.receiverId}';
+      final room = widget.roomName ?? _deterministicRoom(widget.callerId, widget.receiverId);
 
       if (widget.isIncoming) {
         // isIncoming=true: this device IS the receiver.
@@ -81,7 +87,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,
           socketUrl: SocialIqLiveSdkConfig.socketUrl,
           callerName: widget.incomingCallerName,
-          callerAvatar: widget.receiverAvatar,
+          callerAvatar: widget.incomingCallerAvatar,
         );
       } else {
         await _controller.startCall(
@@ -92,6 +98,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           callType: CallType.video,
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,
           socketUrl: SocialIqLiveSdkConfig.socketUrl,
+          callerName: widget.callerName,
+          callerAvatar: widget.callerAvatar,
           receiverName: widget.receiverName,
           receiverAvatar: widget.receiverAvatar,
         );
@@ -118,6 +126,13 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         if (mounted) Navigator.of(context).pop();
       });
     }
+  }
+
+  /// Room name independent of caller/receiver order, so both sides agree
+  /// on the same room regardless of who initiated the call.
+  static String _deterministicRoom(String a, String b) {
+    final ids = [a, b]..sort();
+    return 'call_${ids[0]}_${ids[1]}';
   }
 
   Future<void> _endCall() async {
@@ -254,7 +269,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   Widget _buildRemoteVideo(RemoteParticipant participant) {
-    final videoTrack = participant.videoTrackPublications.firstOrNull?.track;
+    final track = participant.videoTrackPublications.firstOrNull?.track;
+    final videoTrack = track is VideoTrack ? track : null;
     if (videoTrack == null) {
       return Container(
         color: SdkTheme.backgroundDark,
@@ -286,14 +302,20 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         ),
       );
     }
-    return VideoTrackRenderer(videoTrack as VideoTrack);
+    return VideoTrackRenderer(videoTrack);
   }
 
   Widget _buildLocalVideo() {
     final localParticipant = _controller.livekitService.localParticipant;
-    final videoTrack = localParticipant?.videoTrackPublications.firstOrNull?.track;
+    final track = localParticipant?.videoTrackPublications.firstOrNull?.track;
+    final videoTrack = track is VideoTrack ? track : null;
     if (videoTrack == null) return const SizedBox.shrink();
-    return VideoTrackRenderer(videoTrack as VideoTrack);
+    // Mirror the local preview when using the front camera so the selfie
+    // feed matches what users expect from their device's camera app.
+    return VideoTrackRenderer(
+      videoTrack,
+      mirrorMode: VideoViewMirrorMode.auto,
+    );
   }
 }
 

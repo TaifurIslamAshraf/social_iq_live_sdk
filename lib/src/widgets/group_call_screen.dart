@@ -77,7 +77,14 @@ class _GroupCallScreenState extends State<GroupCallScreen> {
   }
 
   void _onUpdate() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    // Auto-pop when the call ends (remote end, API failure, etc.)
+    if (_controller.callState == CallState.ended) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop();
+      });
+    }
   }
 
   Future<void> _endCall() async {
@@ -277,7 +284,8 @@ class _ParticipantTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final videoTrack = participant.videoTrackPublications.firstOrNull?.track;
+    final track = participant.videoTrackPublications.firstOrNull?.track;
+    final videoTrack = track is VideoTrack ? track : null;
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(SdkTheme.radiusMedium),
@@ -288,7 +296,12 @@ class _ParticipantTile extends StatelessWidget {
           children: [
             // Video or avatar
             if (videoTrack != null)
-              VideoTrackRenderer(videoTrack as VideoTrack)
+              VideoTrackRenderer(
+                videoTrack,
+                mirrorMode: isLocal
+                    ? VideoViewMirrorMode.auto
+                    : VideoViewMirrorMode.off,
+              )
             else
               Center(
                 child: CircleAvatar(

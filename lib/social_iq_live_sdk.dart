@@ -37,6 +37,29 @@ export 'src/widgets/reaction_animation.dart';
 // Theme
 export 'src/theme/sdk_theme.dart';
 
+/// Result of [SocialIqLiveSdk.initialize].
+class SdkInitResult {
+  /// Whether camera permission is granted.
+  final bool cameraGranted;
+
+  /// Whether microphone permission is granted.
+  final bool microphoneGranted;
+
+  /// Whether either camera or microphone is permanently denied (user must
+  /// open system settings to re-enable).
+  final bool anyPermanentlyDenied;
+
+  const SdkInitResult({
+    required this.cameraGranted,
+    required this.microphoneGranted,
+    required this.anyPermanentlyDenied,
+  });
+
+  /// Microphone is the minimum requirement — audio calls still work without
+  /// the camera, but no form of call is possible without mic access.
+  bool get canMakeCalls => microphoneGranted;
+}
+
 /// Main SDK class. Call [initialize] once in your app's `main()`.
 class SocialIqLiveSdk {
   SocialIqLiveSdk._();
@@ -48,7 +71,12 @@ class SocialIqLiveSdk {
   /// - [serverUrl]: LiveKit WebSocket URL (e.g., `wss://livekit.yourapp.com`)
   /// - [socketUrl]: Socket.IO server URL for comments/reactions
   /// - [apiBaseUrl]: Backend API base URL for token generation
-  static Future<void> initialize({
+  ///
+  /// Returns a [SdkInitResult] describing which permissions were granted.
+  /// Callers should inspect [SdkInitResult.canMakeCalls] before launching
+  /// any call screen and surface a dialog pointing the user to system
+  /// settings when [SdkInitResult.anyPermanentlyDenied] is true.
+  static Future<SdkInitResult> initialize({
     required String serverUrl,
     required String socketUrl,
     required String apiBaseUrl,
@@ -57,13 +85,22 @@ class SocialIqLiveSdk {
     SocialIqLiveSdkConfig.socketUrl = socketUrl;
     SocialIqLiveSdkConfig.apiBaseUrl = apiBaseUrl;
 
-    // Request camera and microphone permissions
-    await [
+    final statuses = await [
       Permission.camera,
       Permission.microphone,
     ].request();
 
+    final camera = statuses[Permission.camera] ?? PermissionStatus.denied;
+    final mic = statuses[Permission.microphone] ?? PermissionStatus.denied;
+
     _initialized = true;
+
+    return SdkInitResult(
+      cameraGranted: camera.isGranted,
+      microphoneGranted: mic.isGranted,
+      anyPermanentlyDenied:
+          camera.isPermanentlyDenied || mic.isPermanentlyDenied,
+    );
   }
 
   /// Whether the SDK has been initialized.

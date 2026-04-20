@@ -151,13 +151,25 @@ class ApiService {
   }
 
   Map<String, dynamic> _handleResponse(http.Response response) {
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    Map<String, dynamic>? body;
+    try {
+      final decoded = jsonDecode(response.body);
+      if (decoded is Map<String, dynamic>) body = decoded;
+    } catch (_) {
+      // Non-JSON body (HTML error page, empty body, plain text from a gateway).
+    }
+
     if (response.statusCode >= 200 && response.statusCode < 300) {
-      return body;
+      if (body != null) return body;
+      throw ApiException(
+        statusCode: response.statusCode,
+        message: 'Malformed JSON response from server',
+      );
     }
     throw ApiException(
       statusCode: response.statusCode,
-      message: body['msg']?.toString() ?? 'Unknown error',
+      message: body?['msg']?.toString() ??
+          (response.body.isNotEmpty ? response.body : 'Unknown error'),
     );
   }
 }

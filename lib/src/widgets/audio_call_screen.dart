@@ -24,6 +24,8 @@ class AudioCallScreen extends StatefulWidget {
   final String userToken;
   final String callerId;
   final String receiverId;
+  final String? callerName;
+  final String? callerAvatar;
   final String? receiverName;
   final String? receiverAvatar;
   final String? roomName;
@@ -35,6 +37,8 @@ class AudioCallScreen extends StatefulWidget {
     required this.userToken,
     required this.callerId,
     required this.receiverId,
+    this.callerName,
+    this.callerAvatar,
     this.receiverName,
     this.receiverAvatar,
     this.roomName,
@@ -74,7 +78,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
 
   Future<void> _startCall() async {
     try {
-      final room = widget.roomName ?? 'call_${widget.callerId}_${widget.receiverId}';
+      final room = widget.roomName ?? _deterministicRoom(widget.callerId, widget.receiverId);
 
       if (widget.isIncoming) {
         // isIncoming=true: this device IS the receiver.
@@ -88,8 +92,8 @@ class _AudioCallScreenState extends State<AudioCallScreen>
           callType: CallType.audio,
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,
           socketUrl: SocialIqLiveSdkConfig.socketUrl,
-          callerName: widget.receiverName,
-          callerAvatar: widget.receiverAvatar,
+          callerName: widget.callerName ?? widget.receiverName,
+          callerAvatar: widget.callerAvatar ?? widget.receiverAvatar,
         );
       } else {
         await _controller.startCall(
@@ -100,6 +104,8 @@ class _AudioCallScreenState extends State<AudioCallScreen>
           callType: CallType.audio,
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,
           socketUrl: SocialIqLiveSdkConfig.socketUrl,
+          callerName: widget.callerName,
+          callerAvatar: widget.callerAvatar,
           receiverName: widget.receiverName,
           receiverAvatar: widget.receiverAvatar,
         );
@@ -118,7 +124,21 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   }
 
   void _onUpdate() {
-    if (mounted) setState(() {});
+    if (!mounted) return;
+    setState(() {});
+    // Auto-pop when the remote party rejects or ends the call.
+    if (_controller.callState == CallState.ended) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) Navigator.of(context).pop();
+      });
+    }
+  }
+
+  /// Room name independent of caller/receiver order, so both sides agree
+  /// on the same room regardless of who initiated the call.
+  static String _deterministicRoom(String a, String b) {
+    final ids = [a, b]..sort();
+    return 'call_${ids[0]}_${ids[1]}';
   }
 
   Future<void> _endCall() async {

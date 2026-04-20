@@ -17,7 +17,7 @@ enum StreamMode {
   /// Live broadcast host: 540p @ 20 fps, 800 kbps max, 2-layer simulcast.
   livestream,
 
-  /// 1-on-1 or group video call: 360p @ 15 fps, 500 kbps max, no simulcast.
+  /// 1-on-1 or group video call: 720p @ 30 fps, 1700 kbps max, no simulcast.
   videoCall,
 
   /// 1-on-1 audio call: camera disabled, only audio constraints applied.
@@ -33,6 +33,7 @@ class LiveKitService extends ChangeNotifier {
 
   bool _isMicEnabled = true;
   bool _isCameraEnabled = true;
+  bool _isReconnecting = false;
   StreamMode _currentMode = StreamMode.livestream;
   CameraPosition _currentCameraPosition = CameraPosition.front;
 
@@ -40,6 +41,7 @@ class LiveKitService extends ChangeNotifier {
   Room? get room => _room;
   LocalParticipant? get localParticipant => _localParticipant;
   bool get isConnected => _room?.connectionState == ConnectionState.connected;
+  bool get isReconnecting => _isReconnecting;
   bool get isMicEnabled => _isMicEnabled;
   bool get isCameraEnabled => _isCameraEnabled;
   StreamMode get currentMode => _currentMode;
@@ -73,11 +75,11 @@ class LiveKitService extends ChangeNotifier {
         ],
       );
 
-  /// Video-call preset: 360p @ 15 fps, 500 kbps. No simulcast for 1:1.
+  /// Video-call preset: 720p @ 30 fps, 1700 kbps. No simulcast for 1:1.
   static VideoPublishOptions get _videoCallPublishOptions =>
       const VideoPublishOptions(
         simulcast: false,
-        videoEncoding: VideoEncoding(maxBitrate: 500 * 1000, maxFramerate: 15),
+        videoEncoding: VideoEncoding(maxBitrate: 1700 * 1000, maxFramerate: 30),
       );
 
   /// Shared capture config for livestream — 540p @ 20 fps.
@@ -87,11 +89,11 @@ class LiveKitService extends ChangeNotifier {
         params: VideoParametersPresets.h540_169,
       );
 
-  /// Shared capture config for calls — 360p @ 15 fps.
+  /// Shared capture config for calls — 720p @ 30 fps.
   static CameraCaptureOptions get _callCaptureOptions =>
       const CameraCaptureOptions(
         cameraPosition: CameraPosition.front,
-        params: VideoParametersPresets.h360_169,
+        params: VideoParametersPresets.h720_169,
       );
 
   // ─────────────────────────────────────────────────────────────────────────────
@@ -102,7 +104,7 @@ class LiveKitService extends ChangeNotifier {
   ///
   /// [mode] controls publish quality and simulcast behaviour:
   /// - [StreamMode.livestream] — host broadcast (540p, 2-layer simulcast)
-  /// - [StreamMode.videoCall]  — 1:1 / group video call (360p, no simulcast)
+  /// - [StreamMode.videoCall]  — 1:1 / group video call (720p, no simulcast)
   /// - [StreamMode.audioCall]  — audio-only call
   Future<void> connect({
     required String url,
@@ -286,8 +288,19 @@ class LiveKitService extends ChangeNotifier {
       ..on<TrackUnpublishedEvent>((_) => notifyListeners())
       ..on<TrackSubscribedEvent>((_) => notifyListeners())
       ..on<TrackUnsubscribedEvent>((_) => notifyListeners())
+      ..on<RoomReconnectingEvent>((_) {
+        debugPrint('Room reconnecting');
+        _isReconnecting = true;
+        notifyListeners();
+      })
+      ..on<RoomReconnectedEvent>((_) {
+        debugPrint('Room reconnected');
+        _isReconnecting = false;
+        notifyListeners();
+      })
       ..on<RoomDisconnectedEvent>((_) {
         debugPrint('Room disconnected');
+        _isReconnecting = false;
         notifyListeners();
       });
   }
