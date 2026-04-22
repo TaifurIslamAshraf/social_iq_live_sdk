@@ -1,63 +1,55 @@
-# Audio & Video Calls — Integration Guide
+# Audio & Video Calls
 
-Covers 1:1 **audio** and **video** calls including background/killed-app notifications via Firebase + CallKit.
-For live broadcasts or group calls, see [doc.md](doc.md).
-
----
-
-## Table of contents
-
-1. [How calls work](#1-how-calls-work)
-2. [Basic setup (foreground only)](#2-basic-setup-foreground-only)
-3. [Make an outgoing call](#3-make-an-outgoing-call)
-4. [Call lifecycle callbacks](#4-call-lifecycle-callbacks)
-5. [Receive a call (foreground)](#5-receive-a-call-foreground)
-6. [Background & killed-app calls — Firebase + CallKit](#6-background--killed-app-calls--firebase--callkit)
-   - [6.1 App dependencies](#61-app-dependencies)
-   - [6.2 Backend changes](#62-backend-changes)
-   - [6.3 Flutter wiring](#63-flutter-wiring)
-   - [6.4 Android platform setup](#64-android-platform-setup)
-   - [6.5 iOS platform setup](#65-ios-platform-setup)
-7. [Controls reference](#7-controls-reference)
-8. [Backend contract](#8-backend-contract)
-9. [Troubleshooting](#9-troubleshooting)
+> For live broadcasts or group calls see [doc.md](doc.md).
 
 ---
 
-## 1. How calls work
+## How it works
 
 ```
-CALLER                         BACKEND                        RECEIVER
-  │                               │                               │
-  │── POST /v1/api/get-token ─────►│                               │
-  │◄── { callerToken,             │                               │
-  │      receiverToken,           │                               │
-  │      livekitUrl } ────────────│                               │
-  │                               │                               │
-  │── socket: call_offer ─────────►│── socket: incoming_call ─────►│  (foreground)
-  │                               │── FCM data message ───────────►│  (background/killed)
-  │                               │                               │
-  │             receiver taps Accept                              │
-  │                               │◄── socket: call_answer ───────│
-  │◄── socket: call_accepted ─────│                               │
-  │                               │                               │
-  │── joins LiveKit room ─────────────────────────────────────────►│
-  │◄──────────── both in room, media flows ───────────────────────►│
+Caller                    Backend                   Receiver
+  │── get-token ─────────►│                               │
+  │◄── callerToken ────────│                               │
+  │                        │                               │
+  │── socket: call_offer ─►│── socket: incoming_call ─────►│  app foreground
+  │                        │── FCM push ──────────────────►│  app background/killed
+  │                        │                               │
+  │         receiver accepts                               │
+  │◄── socket: call_accepted ──────────────────────────────│
+  │                        │                               │
+  │◄═══════ both join LiveKit room, media flows ══════════►│
 ```
 
-**The gap without Firebase:** Socket.IO requires the app to be running. Android's Doze mode suspends WebSockets within ~30 s of backgrounding. iOS kills them in ~5 s. Firebase FCM wakes the device and shows a native call UI via `flutter_callkit_incoming` (CallKit on iOS, a heads-up notification on Android).
+Without Firebase, Socket.IO dies when the app is backgrounded (~30 s Android, ~5 s iOS). FCM wakes the device and shows a native call UI via `flutter_callkit_incoming`.
 
 ---
 
-## 2. Basic setup (foreground only)
-
-### SDK init — `main.dart`
+## 1. Initialize — `main.dart`
 
 ```dart
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:social_iq_live_sdk/social_iq_live_sdk.dart';
+
+// Top-level function — runs in its own isolate when app is killed
+@pragma('vm:entry-point')
+Future<void> _onBackgroundMessage(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  if (message.data['type'] == 'incoming_call') {
+    await CallNotificationHandler.showIncomingCall(message.data);
+  }
+  if (message.data['type'] == 'call_cancelled') {
+    await CallNotificationHandler.endCall(message.data['roomName']!);
+  }
+}
+
+final navigatorKey = GlobalKey<NavigatorState>();
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp();
+  FirebaseMessaging.onBackgroundMessage(_onBackgroundMessage);
 
   final result = await SocialIqLiveSdk.initialize(
     serverUrl:  'wss://livekit.yourapp.com',
@@ -66,19 +58,22 @@ Future<void> main() async {
   );
 
   if (!result.canMakeCalls) {
-    // Mic denied — show a dialog directing the user to system Settings.
-    // result.anyPermanentlyDenied == true means .openAppSettings() is needed.
+    // Microphone denied — show a dialog and direct user to Settings
+    // result.anyPermanentlyDenied == true → use openAppSettings()
   }
 
-  runApp(const MyApp());
+  // Start listening for CallKit accept/decline taps
+  CallNotificationHandler.initialize();
+
+  runApp(MyApp(navigatorKey: navigatorKey));
 }
 ```
 
 ---
 
-## 3. Make an outgoing call
+## 2. Make an outgoing call
 
-### Audio call
+### Audio
 
 ```dart
 Navigator.push(context, MaterialPageRoute(
@@ -86,18 +81,18 @@ Navigator.push(context, MaterialPageRoute(
     userToken:     myJwt,
     callerId:      myUserId,
     receiverId:    otherUserId,
-    callerName:    myName,           // shown on receiver's incoming screen
+    callerName:    myName,          // shown on receiver's ringing screen
     callerAvatar:  myAvatarUrl,
-    receiverName:  otherName,        // shown on MY "calling…" screen
+    receiverName:  otherName,       // shown on your own "Calling…" screen
     receiverAvatar: otherAvatarUrl,
-    onCallStarted:   () { },         // state → connecting
-    onCallConnected: () { },         // state → connected, media live
-    onCallEnded: (duration) => debugPrint('Call: $duration'),
+    onCallStarted:   () => setStatus('on_a_call'),   // state → connecting
+    onCallConnected: () => startLogging(),            // state → connected, media live
+    onCallEnded: (duration) => setStatus('online'),  // call finished
   ),
 ));
 ```
 
-### Video call
+### Video
 
 ```dart
 Navigator.push(context, MaterialPageRoute(
@@ -109,92 +104,32 @@ Navigator.push(context, MaterialPageRoute(
     callerAvatar:  myAvatarUrl,
     receiverName:  otherName,
     receiverAvatar: otherAvatarUrl,
-    onCallStarted:   () { },
-    onCallConnected: () { },
-    onCallEnded: (duration) { },
+    onCallStarted:   () => setStatus('on_a_call'),
+    onCallConnected: () => startLogging(),
+    onCallEnded: (duration) => setStatus('online'),
   ),
 ));
 ```
 
-Both screens handle LiveKit connect, mute, speaker toggle, camera flip, and end-call.
-They auto-close when the other side rejects or hangs up, and time out after **45 s** if unanswered.
-Video calls publish at **720p @ 30 fps / 1700 kbps**. Audio calls use DTX + RED.
+Video publishes at **720p @ 30 fps / 1700 kbps**. Calls auto-close after **45 s** if unanswered or when the other side hangs up.
 
 ---
 
-## 4. Call lifecycle callbacks
+## 3. Callbacks reference
 
-Both `AudioCallScreen` and `VideoCallScreen` expose three callbacks that fire exactly once each at the corresponding state transition:
+All three callbacks are optional and fire exactly once each.
 
-| Callback | Fires when | Typical use |
-|---|---|---|
-| `onCallStarted` | State → `connecting` — immediately on initiation or answer | Update user status to "on a call", hide dialler UI, start logging |
-| `onCallConnected` | State → `connected` — LiveKit joined, media flowing | Analytics, call-quality monitoring, show in-call badge elsewhere in app |
-| `onCallEnded(Duration)` | State → `ended` — either side hung up | Restore user status, save call history, show call summary |
-
-### Audio call with all callbacks
-
-```dart
-Navigator.push(context, MaterialPageRoute(
-  builder: (_) => AudioCallScreen(
-    userToken:    myJwt,
-    callerId:     myUserId,
-    receiverId:   otherUserId,
-    callerName:   myName,
-    callerAvatar: myAvatarUrl,
-    receiverName:  otherName,
-    receiverAvatar: otherAvatarUrl,
-
-    onCallStarted: () {
-      // Fires at CallState.connecting
-      updateUserStatus('on_a_call');
-    },
-    onCallConnected: () {
-      // Fires at CallState.connected — media is live
-      startCallLogging(roomName);
-    },
-    onCallEnded: (duration) {
-      updateUserStatus('online');
-      saveCallHistory(duration);
-    },
-  ),
-));
-```
-
-### Video call with all callbacks
-
-```dart
-Navigator.push(context, MaterialPageRoute(
-  builder: (_) => VideoCallScreen(
-    userToken:    myJwt,
-    callerId:     myUserId,
-    receiverId:   otherUserId,
-    callerName:   myName,
-    callerAvatar: myAvatarUrl,
-    receiverName:  otherName,
-    receiverAvatar: otherAvatarUrl,
-
-    onCallStarted: () {
-      updateUserStatus('on_a_call');
-    },
-    onCallConnected: () {
-      startCallLogging(roomName);
-    },
-    onCallEnded: (duration) {
-      updateUserStatus('online');
-      saveCallHistory(duration);
-    },
-  ),
-));
-```
-
-> All three callbacks are optional. You can provide any combination or none.
+| Callback | When it fires |
+|---|---|
+| `onCallStarted` | State → `connecting` — call initiated or answered |
+| `onCallConnected` | State → `connected` — LiveKit joined, media flowing |
+| `onCallEnded(Duration)` | State → `ended` — either side hung up |
 
 ---
 
-## 5. Receive a call (foreground)
+## 4. Receive a call (foreground)
 
-Listen on a top-level widget (e.g. `HomeScreen`) after login. This path works when the app is in the foreground:
+Add this to your top-level widget (e.g. `HomeScreen`) after login:
 
 ```dart
 class _HomeState extends State<Home> {
@@ -206,48 +141,71 @@ class _HomeState extends State<Home> {
     _socket.connect(url: SocialIqLiveSdkConfig.socketUrl, authToken: myJwt);
     _socket.registerUser(myUserId);
 
-    _socket.onIncomingCall.listen(_handleIncomingCall);
-  }
+    // Foreground: socket delivers the call
+    _socket.onIncomingCall.listen((data) {
+      final isVideo = data['callType'] == 'video';
+      Navigator.push(context, MaterialPageRoute(
+        builder: (_) => IncomingCallScreen(
+          callerName:   data['callerName'] ?? 'Unknown',
+          callerAvatar: data['callerAvatar'],
+          callType: isVideo ? CallType.video : CallType.audio,
+          onAccept: () {
+            Navigator.pop(context);
+            _openCallScreen(data, isVideo);
+          },
+          onDecline: () {
+            _socket.rejectCall(callerId: data['callerId'], receiverId: myUserId);
+            Navigator.pop(context);
+          },
+        ),
+      ));
+    });
 
-  void _handleIncomingCall(Map<String, dynamic> data) {
-    final isVideo = data['callType'] == 'video';
-    Navigator.push(context, MaterialPageRoute(
-      builder: (_) => IncomingCallScreen(
-        callerName:   data['callerName']   ?? 'Unknown',
-        callerAvatar: data['callerAvatar'],
-        callType: isVideo ? CallType.video : CallType.audio,
-        onAccept: () {
-          Navigator.pop(context);
-          _openCallScreen(data, isVideo);
-        },
-        onDecline: () {
-          _socket.rejectCall(callerId: data['callerId'], receiverId: myUserId);
-          Navigator.pop(context);
-        },
-      ),
-    ));
+    // Background/killed: CallKit delivers the call — listen for accept/decline
+    CallNotificationHandler.onCallAccepted.listen((data) {
+      _openCallScreen(data, data['callType'] == 'video');
+    });
+    CallNotificationHandler.onCallDeclined.listen((data) {
+      _socket.rejectCall(callerId: data['callerId']!, receiverId: myUserId);
+    });
+
+    // Foreground FCM — show native call UI for consistency (optional)
+    FirebaseMessaging.onMessage.listen((msg) {
+      if (msg.data['type'] == 'incoming_call') {
+        CallNotificationHandler.showIncomingCall(msg.data);
+      }
+      if (msg.data['type'] == 'call_cancelled') {
+        CallNotificationHandler.endCall(msg.data['roomName']!);
+      }
+    });
   }
 
   void _openCallScreen(Map<String, dynamic> data, bool isVideo) {
-    Navigator.push(context, MaterialPageRoute(
+    navigatorKey.currentState?.push(MaterialPageRoute(
       builder: (_) => isVideo
           ? VideoCallScreen(
-              userToken:           myJwt,
-              callerId:            data['callerId'],
-              receiverId:          myUserId,
-              roomName:            data['roomName'],
-              isIncoming:          true,
-              incomingCallerName:  data['callerName'],
+              userToken:            myJwt,
+              callerId:             data['callerId']!,
+              receiverId:           myUserId,
+              roomName:             data['roomName'],
+              isIncoming:           true,
+              incomingCallerName:   data['callerName'],
               incomingCallerAvatar: data['callerAvatar'],
+              onCallStarted:   () => setStatus('on_a_call'),
+              onCallConnected: () => startLogging(),
+              onCallEnded: (_)     => setStatus('online'),
             )
           : AudioCallScreen(
               userToken:   myJwt,
-              callerId:    data['callerId'],
+              callerId:    data['callerId']!,
               receiverId:  myUserId,
               roomName:    data['roomName'],
               isIncoming:  true,
               callerName:  data['callerName'],
               callerAvatar: data['callerAvatar'],
+              onCallStarted:   () => setStatus('on_a_call'),
+              onCallConnected: () => startLogging(),
+              onCallEnded: (_)     => setStatus('online'),
             ),
     ));
   }
@@ -262,45 +220,35 @@ class _HomeState extends State<Home> {
 
 ---
 
-## 6. Background & killed-app calls — Firebase + CallKit
+## 5. Background calls — Firebase setup
 
-### 6.1 App dependencies
-
-Add to your **app's** `pubspec.yaml` (not the SDK — Firebase config is per-app):
+### 5.1 Flutter dependencies (`pubspec.yaml`)
 
 ```yaml
 dependencies:
   firebase_core: ^3.6.0
   firebase_messaging: ^15.1.3
-  # flutter_callkit_incoming is already pulled in by the SDK — no need to re-add
+  # flutter_callkit_incoming — already included by the SDK, no need to add
 ```
 
-Run:
-```bash
-flutter pub get
+### 5.2 FCM token — upload after login
+
+```dart
+Future<void> registerFcmToken() async {
+  final token = await FirebaseMessaging.instance.getToken();
+  if (token == null) return;
+
+  await http.post(
+    Uri.parse('${SocialIqLiveSdkConfig.apiBaseUrl}/v1/api/fcm-token'),
+    headers: {'Content-Type': 'application/json', 'Authorization': 'Bearer $myJwt'},
+    body: jsonEncode({'userId': myUserId, 'token': token, 'platform': Platform.isIOS ? 'ios' : 'android'}),
+  );
+
+  FirebaseMessaging.instance.onTokenRefresh.listen((_) => registerFcmToken());
+}
 ```
 
-### 6.2 Backend changes
-
-Your Node.js server needs two additions.
-
-**A — Store FCM tokens**
-
-Add an endpoint the app calls after login:
-
-```js
-// POST /v1/api/fcm-token
-// Body: { userId, token, platform }   platform = 'android' | 'ios'
-app.post('/v1/api/fcm-token', auth, async (req, res) => {
-  const { userId, token, platform } = req.body;
-  await db.users.update({ id: userId }, { fcmToken: token, fcmPlatform: platform });
-  res.json({ status: 'ok' });
-});
-```
-
-**B — Send FCM on `call_offer`**
-
-In your socket handler, push an FCM message alongside (or instead of) the socket relay:
+### 5.3 Backend — send FCM on `call_offer`
 
 ```js
 const admin = require('firebase-admin');
@@ -308,291 +256,106 @@ const admin = require('firebase-admin');
 socket.on('call_offer', async (data) => {
   const { callerId, receiverId, roomName, callType, callerName, callerAvatar } = data;
 
-  // 1. Always relay via socket — instant delivery when receiver is foreground.
-  const receiverSocket = onlineUsers.get(receiverId);
-  if (receiverSocket) {
-    receiverSocket.emit('incoming_call', data);
-  }
+  // Always relay via socket (instant when receiver is online)
+  onlineUsers.get(receiverId)?.emit('incoming_call', data);
 
-  // 2. Always send FCM — wakes the device when socket is dead.
-  const user = await db.users.findById(receiverId);
-  if (user?.fcmToken) {
+  // Always push FCM (wakes the device when socket is dead)
+  const { fcmToken } = await db.users.findById(receiverId);
+  if (fcmToken) {
     await admin.messaging().send({
-      token: user.fcmToken,
+      token: fcmToken,
+      data: { type: 'incoming_call', callerId, receiverId, roomName, callType,
+              callerName: callerName ?? '', callerAvatar: callerAvatar ?? '' },
+      android: { priority: 'high' },
+      apns: { headers: { 'apns-push-type': 'voip', 'apns-priority': '10' } },
+    });
+  }
+});
 
-      // Use only 'data' (no 'notification' block) so the app handles the UI
-      // via flutter_callkit_incoming instead of showing a regular notification.
-      data: {
-        type:        'incoming_call',
-        callerId:    callerId,
-        receiverId:  receiverId,
-        roomName:    roomName,
-        callType:    callType,          // 'audio' | 'video'
-        callerName:  callerName  ?? '',
-        callerAvatar: callerAvatar ?? '',
-      },
-
-      android: {
-        priority: 'high',               // bypasses Doze mode
-      },
-
-      apns: {
-        headers: {
-          'apns-push-type': 'voip',     // triggers immediate iOS wakeup via PushKit
-          'apns-priority':  '10',
-        },
-      },
+// When caller cancels before receiver answers
+socket.on('call_end', async (data) => {
+  // ... your existing logic ...
+  // Also push to dismiss any active CallKit screen on receiver's device
+  const { fcmToken } = await db.users.findById(data.receiverId);
+  if (fcmToken) {
+    await admin.messaging().send({
+      token: fcmToken,
+      data: { type: 'call_cancelled', roomName: data.roomName ?? '' },
+      android: { priority: 'high' },
+      apns: { headers: { 'apns-push-type': 'voip', 'apns-priority': '10' } },
     });
   }
 });
 ```
 
-> **Deduplication:** Both the socket and FCM paths may fire when the receiver is foreground. Guard against this by tracking the `roomName` — if `CallNotificationHandler.showIncomingCall` is called for a room already visible, `flutter_callkit_incoming` deduplicates by the `id` field (= `roomName`).
+### 5.4 Android setup
 
-### 6.3 Flutter wiring
+1. Add `google-services.json` → `android/app/`
 
-**A — `main.dart`** — Firebase init + background handler + CallKit listener
-
-```dart
-import 'package:firebase_core/firebase_core.dart';
-import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:social_iq_live_sdk/social_iq_live_sdk.dart';
-
-// Must be a top-level function — runs in a separate isolate when app is killed.
-@pragma('vm:entry-point')
-Future<void> _firebaseBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
-
-  if (message.data['type'] == 'incoming_call') {
-    await CallNotificationHandler.showIncomingCall(message.data);
-  }
-}
-
-final navigatorKey = GlobalKey<NavigatorState>();
-
-Future<void> main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  await Firebase.initializeApp();
-  FirebaseMessaging.onBackgroundMessage(_firebaseBackgroundHandler);
-
-  // Initialize SDK (requests mic + camera permissions).
-  await SocialIqLiveSdk.initialize(
-    serverUrl:  'wss://livekit.yourapp.com',
-    socketUrl:  'https://api.yourapp.com',
-    apiBaseUrl: 'https://api.yourapp.com',
-  );
-
-  // Start listening for CallKit accept / decline taps.
-  CallNotificationHandler.initialize();
-
-  runApp(MyApp(navigatorKey: navigatorKey));
-}
-```
-
-**B — Upload FCM token after login**
-
-```dart
-Future<void> registerFcmToken(String myJwt) async {
-  final token = await FirebaseMessaging.instance.getToken();
-  if (token == null) return;
-
-  await http.post(
-    Uri.parse('${SocialIqLiveSdkConfig.apiBaseUrl}/v1/api/fcm-token'),
-    headers: {
-      'Content-Type':  'application/json',
-      'Authorization': 'Bearer $myJwt',
-    },
-    body: jsonEncode({
-      'userId':   myUserId,
-      'token':    token,
-      'platform': Platform.isIOS ? 'ios' : 'android',
-    }),
-  );
-
-  // Re-upload if the token rotates.
-  FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
-    // call same endpoint with newToken
-  });
-}
-```
-
-**C — Handle foreground FCM (optional but recommended)**
-
-If you want the native call UI even when the app is foreground (single consistent path instead of both socket + `IncomingCallScreen`):
-
-```dart
-// In initState of your top-level widget, alongside the socket listener:
-FirebaseMessaging.onMessage.listen((message) {
-  if (message.data['type'] == 'incoming_call') {
-    CallNotificationHandler.showIncomingCall(message.data);
-  }
-});
-```
-
-**D — Listen for CallKit accept / decline** (top-level widget, e.g. `HomeScreen`)
-
-```dart
-@override
-void initState() {
-  super.initState();
-
-  // Accept — open the call screen
-  CallNotificationHandler.onCallAccepted.listen((data) {
-    final isVideo = data['callType'] == 'video';
-    navigatorKey.currentState?.push(MaterialPageRoute(
-      builder: (_) => isVideo
-          ? VideoCallScreen(
-              userToken:            myJwt,
-              callerId:             data['callerId']!,
-              receiverId:           myUserId,
-              roomName:             data['roomName'],
-              isIncoming:           true,
-              incomingCallerName:   data['callerName'],
-              incomingCallerAvatar: data['callerAvatar'],
-              onCallStarted:   () => updateUserStatus('on_a_call'),
-              onCallConnected: () => startCallLogging(data['roomName']),
-              onCallEnded: (_)     => updateUserStatus('online'),
-            )
-          : AudioCallScreen(
-              userToken:   myJwt,
-              callerId:    data['callerId']!,
-              receiverId:  myUserId,
-              roomName:    data['roomName'],
-              isIncoming:  true,
-              callerName:  data['callerName'],
-              callerAvatar: data['callerAvatar'],
-              onCallStarted:   () => updateUserStatus('on_a_call'),
-              onCallConnected: () => startCallLogging(data['roomName']),
-              onCallEnded: (_)     => updateUserStatus('online'),
-            ),
-    ));
-  });
-
-  // Decline — tell the caller
-  CallNotificationHandler.onCallDeclined.listen((data) {
-    _socket.rejectCall(
-      callerId:   data['callerId']!,
-      receiverId: myUserId,
-    );
-  });
-}
-```
-
-**E — Dismiss CallKit UI when the caller cancels**
-
-When the caller hangs up before the receiver answers, the CallKit screen must be dismissed too. Add this to the backend: when a `call_end` socket event arrives for a call that hasn't been answered yet, send another FCM data message:
-
-```js
-// backend
-data: { type: 'call_cancelled', roomName: roomName }
-```
-
-```dart
-// Flutter — in your FCM handlers (both background and foreground)
-if (message.data['type'] == 'call_cancelled') {
-  await CallNotificationHandler.endCall(message.data['roomName']!);
-}
-```
-
-### 6.4 Android platform setup
-
-1. Add `google-services.json` to `android/app/`.
-
-2. In `android/build.gradle` (project level):
+2. `android/build.gradle`:
 ```groovy
 dependencies {
   classpath 'com.google.gms:google-services:4.4.2'
 }
 ```
 
-3. In `android/app/build.gradle`:
+3. `android/app/build.gradle`:
 ```groovy
 apply plugin: 'com.google.gms.google-services'
 ```
 
-4. In `android/app/src/main/AndroidManifest.xml`, inside `<application>`:
+4. `AndroidManifest.xml` inside `<application>`:
 ```xml
-<!-- Required by flutter_callkit_incoming for the full-screen call UI -->
-<activity
-    android:name="com.hiennv.flutter_callkit_incoming.CallkitIncomingActivity"
-    android:exported="false" />
-
-<receiver
-    android:name="com.hiennv.flutter_callkit_incoming.CallkitIncomingBroadcastReceiver"
-    android:exported="false" />
-
-<!-- Required for FCM background handler -->
-<service
-    android:name="com.google.firebase.messaging.FirebaseMessagingService"
-    android:exported="false">
-  <intent-filter>
-    <action android:name="com.google.firebase.MESSAGING_EVENT" />
-  </intent-filter>
+<activity android:name="com.hiennv.flutter_callkit_incoming.CallkitIncomingActivity" android:exported="false" />
+<receiver android:name="com.hiennv.flutter_callkit_incoming.CallkitIncomingBroadcastReceiver" android:exported="false" />
+<service android:name="com.google.firebase.messaging.FirebaseMessagingService" android:exported="false">
+  <intent-filter><action android:name="com.google.firebase.MESSAGING_EVENT" /></intent-filter>
 </service>
 ```
 
-5. For Android 13+ (API 33), request notification permission on first launch:
+5. Request permissions on first launch:
 ```dart
 await FirebaseMessaging.instance.requestPermission();
-// flutter_callkit_incoming also exposes:
-await FlutterCallkitIncoming.requestNotificationPermission({});
-// For Android 14+ full-screen intent permission:
-await FlutterCallkitIncoming.requestFullIntentPermission();
+await FlutterCallkitIncoming.requestNotificationPermission({});  // Android 13+
+await FlutterCallkitIncoming.requestFullIntentPermission();      // Android 14+
 ```
 
-### 6.5 iOS platform setup
+### 5.5 iOS setup
 
-**A — Xcode capabilities** (Runner target → Signing & Capabilities):
+**Xcode** → Runner target → Signing & Capabilities → add:
 - Push Notifications
-- Background Modes → check:
-  - Voice over IP
-  - Background fetch
-  - Remote notifications
+- Background Modes → `Voice over IP`, `Background fetch`, `Remote notifications`
 
-**B — VoIP certificate**
+**VoIP certificate** (required — regular APNs certs cannot send `apns-push-type: voip`):
+1. [developer.apple.com](https://developer.apple.com) → Certificates → create **VoIP Services Certificate**
+2. Export as `.p12`
+3. Firebase Console → Project Settings → Cloud Messaging → upload under **APNs Certificates**
 
-Apple requires a **separate VoIP certificate** (`.p12`) to send `apns-push-type: voip` pushes. Regular APNs certs cannot send VoIP pushes.
-
-1. In [developer.apple.com](https://developer.apple.com) → Certificates — create a **VoIP Services Certificate** for your App ID.
-2. Export it as `.p12`.
-3. In Firebase Console → Project Settings → Cloud Messaging → APNs Authentication Key **or** APNs Certificates — upload the **VoIP** `.p12` under the **APNs Certificates** section.
-
-> If you skip VoIP certificates and use a regular push, iOS will throttle incoming-call pushes and your app will not reliably wake in the background. VoIP push is the only Apple-sanctioned way to trigger CallKit reliably.
-
-**C — `Info.plist`** — no extra keys needed; `flutter_callkit_incoming` configures CallKit via code.
-
-**D — `AppDelegate.swift`** — no changes needed for Flutter; the plugin handles PushKit registration automatically when the app first runs.
+No changes needed to `Info.plist` or `AppDelegate.swift` — the plugin handles PushKit registration automatically.
 
 ---
 
-## 7. Controls reference
+## 6. Controls
 
-| Action | AudioCallScreen | VideoCallScreen |
+| Control | Audio | Video |
 |---|---|---|
-| Mute / Unmute mic | ✅ | ✅ |
-| Toggle speaker | ✅ | — |
-| Toggle camera on/off | — | ✅ |
-| Flip front / back camera | — | ✅ |
+| Mute / Unmute | ✅ | ✅ |
+| Speaker toggle | ✅ | — |
+| Camera on/off | — | ✅ |
+| Flip camera | — | ✅ |
 | End call | ✅ | ✅ |
-| Auto-close on remote end | ✅ | ✅ |
-| Reconnecting indicator | ✅ `isReconnecting` | ✅ `isReconnecting` |
 
 ---
 
-## 8. Backend contract
+## 7. Backend API reference
 
-### HTTP endpoints
-
-| Method | Path | Body | Response |
+| Method | Endpoint | Body | Returns |
 |---|---|---|---|
 | POST | `/v1/api/get-token` | `{ callerId, receiverId, room }` | `{ livekitUrl, callerToken, receiverToken }` |
 | POST | `/v1/api/end-call` | `{ roomName }` | `{ status }` |
 | POST | `/v1/api/fcm-token` | `{ userId, token, platform }` | `{ status }` |
 
-### Socket.IO events
-
-| Direction | Event | Key fields |
+| Direction | Socket event | Fields |
 |---|---|---|
 | client → server | `register_user` | `{ userId }` |
 | client → server | `call_offer` | `{ callerId, receiverId, roomName, callType, callerName, callerAvatar }` |
@@ -600,22 +363,20 @@ Apple requires a **separate VoIP certificate** (`.p12`) to send `apns-push-type:
 | client → server | `call_reject` | `{ callerId, receiverId }` |
 | client → server | `call_end` | `{ callerId, receiverId }` |
 | server → client | `incoming_call` | same as `call_offer` |
-| server → client | `call_accepted` | — |
-| server → client | `call_rejected` | — |
-| server → client | `call_ended` | — |
+| server → client | `call_accepted` / `call_rejected` / `call_ended` | — |
 
 ---
 
-## 9. Troubleshooting
+## 8. Troubleshooting
 
-| Symptom | Likely cause |
+| Problem | Fix |
 |---|---|
-| "Calling…" forever, receiver never notified | Receiver socket not registered; or FCM token not stored; or backend not sending FCM |
-| CallKit screen shows but accept does nothing | `CallNotificationHandler.initialize()` not called at startup |
-| App crashes on accept from killed state | `navigatorKey` not passed to `MaterialApp`; or app state not restored before navigation |
-| "Failed to connect" after accept | LiveKit URL wrong, or UDP 50000-60000 blocked (enable TURN in livekit config) |
-| iOS CallKit never fires from background | VoIP certificate not configured; regular APNs cert cannot send `apns-push-type: voip` |
-| Android call notification not full-screen on lock screen | `isShowFullLockedScreen: true` set but `USE_FULL_SCREEN_INTENT` permission denied on Android 14+ — call `requestFullIntentPermission()` |
-| Duplicate incoming call screens | Both socket and FCM fired for a foreground app — expected; `flutter_callkit_incoming` deduplicates by `id` (roomName) |
-| No audio / one-way audio | Mic permission denied; or speaker routing wrong — check `isSpeakerOn` state |
-| Call ends immediately on mobile data | UDP blocked by carrier — enable TURN server in `livekit.yaml` |
+| "Calling…" forever | Check socket `register_user` is called; check FCM token is stored on backend |
+| CallKit shows but Accept does nothing | `CallNotificationHandler.initialize()` missing from `main()` |
+| Crash on Accept from killed app | Pass `navigatorKey` to `MaterialApp` |
+| "Failed to connect" | Wrong LiveKit URL, or UDP 50000–60000 blocked → enable TURN in `livekit.yaml` |
+| iOS CallKit never fires | VoIP certificate not configured — regular APNs won't work |
+| Android no full-screen on lock screen | Call `requestFullIntentPermission()` on Android 14+ |
+| Double incoming screen | Normal when both socket + FCM fire — `flutter_callkit_incoming` deduplicates by `roomName` |
+| No audio / one-sided | Mic permission denied, or speaker routing off |
+| Call drops on mobile data | UDP blocked by carrier → enable TURN |
