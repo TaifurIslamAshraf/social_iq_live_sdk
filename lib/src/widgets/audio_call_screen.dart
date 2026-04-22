@@ -30,6 +30,13 @@ class AudioCallScreen extends StatefulWidget {
   final String? receiverAvatar;
   final String? roomName;
   final ValueChanged<Duration>? onCallEnded;
+
+  /// Called once when the call begins connecting (offer sent / answer initiated).
+  final VoidCallback? onCallStarted;
+
+  /// Called once when both sides are in the LiveKit room and media flows.
+  final VoidCallback? onCallConnected;
+
   final bool isIncoming;
 
   const AudioCallScreen({
@@ -43,6 +50,8 @@ class AudioCallScreen extends StatefulWidget {
     this.receiverAvatar,
     this.roomName,
     this.onCallEnded,
+    this.onCallStarted,
+    this.onCallConnected,
     this.isIncoming = false,
   });
 
@@ -55,6 +64,8 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   late final CallController _controller;
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
+  bool _startedFired = false;
+  bool _connectedFired = false;
 
   @override
   void initState() {
@@ -126,7 +137,17 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   void _onUpdate() {
     if (!mounted) return;
     setState(() {});
-    // Auto-pop when the remote party rejects or ends the call.
+
+    if (!_startedFired && _controller.callState == CallState.connecting) {
+      _startedFired = true;
+      widget.onCallStarted?.call();
+    }
+
+    if (!_connectedFired && _controller.callState == CallState.connected) {
+      _connectedFired = true;
+      widget.onCallConnected?.call();
+    }
+
     if (_controller.callState == CallState.ended) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) Navigator.of(context).pop();

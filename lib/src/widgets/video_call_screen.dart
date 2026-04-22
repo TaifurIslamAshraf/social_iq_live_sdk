@@ -32,6 +32,15 @@ class VideoCallScreen extends StatefulWidget {
   final String? roomName;
   final ValueChanged<Duration>? onCallEnded;
 
+  /// Called once when the call begins connecting (socket registered, offer sent).
+  /// Use this to update your app state — e.g. mark the user as "on a call",
+  /// start call logging, or hide a dialler UI.
+  final VoidCallback? onCallStarted;
+
+  /// Called once when both sides are in the LiveKit room and media flows.
+  /// Use this for analytics, call-quality monitoring, etc.
+  final VoidCallback? onCallConnected;
+
   /// Set true if answering an incoming call.
   final bool isIncoming;
   final String? incomingCallerName;
@@ -48,6 +57,8 @@ class VideoCallScreen extends StatefulWidget {
     this.receiverAvatar,
     this.roomName,
     this.onCallEnded,
+    this.onCallStarted,
+    this.onCallConnected,
     this.isIncoming = false,
     this.incomingCallerName,
     this.incomingCallerAvatar,
@@ -59,6 +70,8 @@ class VideoCallScreen extends StatefulWidget {
 
 class _VideoCallScreenState extends State<VideoCallScreen> {
   late final CallController _controller;
+  bool _startedFired = false;
+  bool _connectedFired = false;
 
   @override
   void initState() {
@@ -120,7 +133,17 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   void _onUpdate() {
     if (!mounted) return;
     setState(() {});
-    // Auto-pop when the remote party ends the call
+
+    if (!_startedFired && _controller.callState == CallState.connecting) {
+      _startedFired = true;
+      widget.onCallStarted?.call();
+    }
+
+    if (!_connectedFired && _controller.callState == CallState.connected) {
+      _connectedFired = true;
+      widget.onCallConnected?.call();
+    }
+
     if (_controller.callState == CallState.ended) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) Navigator.of(context).pop();
