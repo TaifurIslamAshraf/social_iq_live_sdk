@@ -156,37 +156,45 @@ class CallController extends ChangeNotifier {
         endCall();
       });
 
-      // Stay in Calling… state; join LiveKit only when receiver accepts.
-      _callResponseSub = _socketService.onCallAccepted.listen((_) async {
-        if (_callState != CallState.connecting) return;
-        _ringingTimer?.cancel();
-        _extraSub?.cancel();
-        try {
-          await _livekitService.connect(
+      // Connect to LiveKit eagerly while the receiver is still ringing.
+      // By the time they accept, the caller is already in the room — the
+      // "Calling…" → timer transition happens almost instantly.
+      _isSpeakerOn = callType != CallType.audio;
+      final connectFuture = _livekitService
+          .connect(
             url: tokenData['livekitUrl'] ?? livekitUrl,
             token: tokenData['callerToken'],
             enableCamera: callType == CallType.video,
             enableMicrophone: true,
             mode: _modeFor(callType),
-          );
-          // Sync speaker state so the UI button reflects the actual routing
-          // set inside livekit_service.connect() (audio=earpiece, video=speaker).
-          _isSpeakerOn = callType != CallType.audio;
-          _callState = CallState.connected;
-          _startDurationTimer();
-          _livekitService.addListener(_onLiveKitUpdate);
-          notifyListeners();
-        } catch (e) {
+          )
+          .catchError((dynamic e) {
+        debugPrint('[CallController] Eager LiveKit connect error: $e');
+        if (_callState == CallState.connecting) {
           _callState = CallState.ended;
           notifyListeners();
         }
       });
 
-      // Receiver declined.
+      // Receiver accepted — LiveKit connection is likely already done.
+      _callResponseSub = _socketService.onCallAccepted.listen((_) async {
+        if (_callState != CallState.connecting) return;
+        _ringingTimer?.cancel();
+        _extraSub?.cancel();
+        await connectFuture; // no-op if already connected
+        if (_callState == CallState.ended) return; // connect failed
+        _callState = CallState.connected;
+        _startDurationTimer();
+        _livekitService.addListener(_onLiveKitUpdate);
+        notifyListeners();
+      });
+
+      // Receiver declined — disconnect from LiveKit.
       _extraSub = _socketService.onCallRejected.listen((_) {
         if (_callState != CallState.connecting) return;
         _ringingTimer?.cancel();
         _callResponseSub?.cancel();
+        _livekitService.disconnect();
         _callState = CallState.ended;
         notifyListeners();
       });

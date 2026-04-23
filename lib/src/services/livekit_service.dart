@@ -180,20 +180,15 @@ class LiveKitService extends ChangeNotifier {
     );
     _localParticipant = _room!.localParticipant;
 
-    if (enableCamera && mode != StreamMode.audioCall) {
-      await _localParticipant?.setCameraEnabled(true);
-      _isCameraEnabled = true;
-    } else {
-      _isCameraEnabled = false;
-    }
+    final wantCamera = enableCamera && mode != StreamMode.audioCall;
+    _isCameraEnabled = wantCamera;
+    _isMicEnabled = enableMicrophone;
 
-    if (enableMicrophone) {
-      await _localParticipant?.setMicrophoneEnabled(true);
-      _isMicEnabled = true;
-    } else {
-      await _localParticipant?.setMicrophoneEnabled(false);
-      _isMicEnabled = false;
-    }
+    // Enable camera and mic in parallel — saves 1-2 s vs sequential awaits.
+    await Future.wait([
+      _localParticipant?.setCameraEnabled(wantCamera) ?? Future.value(),
+      _localParticipant?.setMicrophoneEnabled(enableMicrophone) ?? Future.value(),
+    ]);
 
     notifyListeners();
   }
