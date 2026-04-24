@@ -46,6 +46,11 @@ class VideoCallScreen extends StatefulWidget {
   final String? incomingCallerName;
   final String? incomingCallerAvatar;
 
+  /// Optional pre-warmed controller from [CallController.prepareToAnswer].
+  /// When provided the call connects almost instantly instead of waiting for
+  /// a fresh token fetch and LiveKit handshake.
+  final CallController? controller;
+
   const VideoCallScreen({
     super.key,
     required this.userToken,
@@ -62,6 +67,7 @@ class VideoCallScreen extends StatefulWidget {
     this.isIncoming = false,
     this.incomingCallerName,
     this.incomingCallerAvatar,
+    this.controller,
   });
 
   @override
@@ -76,9 +82,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   @override
   void initState() {
     super.initState();
-    _controller = CallController(
-      apiService: ApiService(baseUrl: SocialIqLiveSdkConfig.apiBaseUrl),
-    );
+    _controller = widget.controller ??
+        CallController(
+          apiService: ApiService(baseUrl: SocialIqLiveSdkConfig.apiBaseUrl),
+        );
     _controller.addListener(_onUpdate);
     _startCall();
   }

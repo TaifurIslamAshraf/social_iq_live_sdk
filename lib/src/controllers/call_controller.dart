@@ -35,6 +35,10 @@ class CallController extends ChangeNotifier {
   bool _isSpeakerOn = false;
   bool _endSignaled = false;
 
+  // Pre-fetch state — populated by prepareToAnswer() during ringing
+  Map<String, dynamic>? _preparedTokenData;
+  Future<void>? _preparedConnectFuture;
+
   StreamSubscription? _callEndedSub;
   StreamSubscription? _callResponseSub;
   StreamSubscription? _extraSub;
@@ -207,10 +211,78 @@ class CallController extends ChangeNotifier {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
+  // Incoming call — pre-warm
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /// Call this the moment an incoming call arrives (while the ringing screen
+  /// is showing). It fetches the LiveKit token and starts the WebRTC connection
+  /// in the background so that by the time the user taps Accept the room is
+  /// already joined and the timer can start within 1–2 s.
+  ///
+  /// Pass this [CallController] instance to [AudioCallScreen] or
+  /// [VideoCallScreen] via the [controller] parameter so [answerCall] reuses
+  /// the pre-warmed connection instead of starting from scratch.
+  Future<void> prepareToAnswer({
+    required String userToken,
+    required String callerId,
+    required String receiverId,
+    required String roomName,
+    required CallType callType,
+    required String livekitUrl,
+    required String socketUrl,
+    String? callerName,
+    String? callerAvatar,
+  }) async {
+    _callType = callType;
+    _roomName = roomName;
+    _callerId = callerId;
+    _receiverId = receiverId;
+    _receiverName = callerName;
+    _receiverAvatar = callerAvatar;
+
+    _apiService.setAuthToken(userToken);
+    _socketService.connect(url: socketUrl, authToken: userToken);
+    _socketService.registerUser(receiverId);
+    _listenForSocketReconnect(receiverId);
+    _listenForCallEnded();
+
+    try {
+      _preparedTokenData = await _apiService.getCallToken(
+        callerId: callerId,
+        receiverId: receiverId,
+        room: roomName,
+      );
+
+      // Start LiveKit connect in background — runs during ringing.
+      _preparedConnectFuture = _livekitService
+          .connect(
+            url: _preparedTokenData!['livekitUrl'] ?? livekitUrl,
+            token: _preparedTokenData!['receiverToken'],
+            enableCamera: callType == CallType.video,
+            enableMicrophone: true,
+            mode: _modeFor(callType),
+          )
+          .catchError((dynamic e) {
+        debugPrint('[CallController] Pre-connect failed: $e');
+        _preparedTokenData = null;
+        _preparedConnectFuture = null;
+      });
+
+      debugPrint('[CallController] Pre-warming LiveKit connection for incoming call');
+    } catch (e) {
+      debugPrint('[CallController] prepareToAnswer API call failed: $e');
+      _preparedTokenData = null;
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
   // Incoming call
   // ─────────────────────────────────────────────────────────────────────────
 
   /// Join a call as receiver (for incoming calls).
+  ///
+  /// If [prepareToAnswer] was called earlier, the token and LiveKit connection
+  /// are already ready and this completes almost instantly.
   Future<void> answerCall({
     required String userToken,
     required String receiverId,
@@ -237,26 +309,40 @@ class CallController extends ChangeNotifier {
     _receiverAvatar = callerAvatar;
     notifyListeners();
 
-    _apiService.setAuthToken(userToken);
-    _socketService.connect(url: socketUrl, authToken: userToken);
-    _socketService.registerUser(receiverId);
-    _listenForSocketReconnect(receiverId);
-    _listenForCallEnded();
+    // Only set up services if prepareToAnswer() wasn't already called.
+    if (_preparedTokenData == null) {
+      _apiService.setAuthToken(userToken);
+      _socketService.connect(url: socketUrl, authToken: userToken);
+      _socketService.registerUser(receiverId);
+      _listenForSocketReconnect(receiverId);
+      _listenForCallEnded();
+    }
 
     try {
-      final tokenData = await _apiService.getCallToken(
-        callerId: callerId,
-        receiverId: receiverId,
-        room: roomName,
-      );
+      final tokenData = _preparedTokenData ??
+          await _apiService.getCallToken(
+            callerId: callerId,
+            receiverId: receiverId,
+            room: roomName,
+          );
 
-      await _livekitService.connect(
-        url: tokenData['livekitUrl'] ?? livekitUrl,
-        token: tokenData['receiverToken'],
-        enableCamera: callType == CallType.video,
-        enableMicrophone: true,
-        mode: _modeFor(callType),
-      );
+      if (_preparedConnectFuture != null) {
+        // Pre-warm path: LiveKit is already connected (or nearly so).
+        debugPrint('[CallController] Awaiting pre-warmed LiveKit connection');
+        await _preparedConnectFuture;
+      } else {
+        await _livekitService.connect(
+          url: tokenData['livekitUrl'] ?? livekitUrl,
+          token: tokenData['receiverToken'],
+          enableCamera: callType == CallType.video,
+          enableMicrophone: true,
+          mode: _modeFor(callType),
+        );
+      }
+
+      _preparedTokenData = null;
+      _preparedConnectFuture = null;
+
       // Sync speaker state so the UI button reflects the actual routing.
       _isSpeakerOn = callType != CallType.audio;
 
@@ -272,6 +358,8 @@ class CallController extends ChangeNotifier {
       _livekitService.addListener(_onLiveKitUpdate);
       notifyListeners();
     } catch (e) {
+      _preparedTokenData = null;
+      _preparedConnectFuture = null;
       _callState = CallState.ended;
       notifyListeners();
       rethrow;

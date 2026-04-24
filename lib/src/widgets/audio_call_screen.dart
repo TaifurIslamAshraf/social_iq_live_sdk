@@ -39,6 +39,11 @@ class AudioCallScreen extends StatefulWidget {
 
   final bool isIncoming;
 
+  /// Optional pre-warmed controller from [CallController.prepareToAnswer].
+  /// When provided the call connects almost instantly instead of waiting for
+  /// a fresh token fetch and LiveKit handshake.
+  final CallController? controller;
+
   const AudioCallScreen({
     super.key,
     required this.userToken,
@@ -53,6 +58,7 @@ class AudioCallScreen extends StatefulWidget {
     this.onCallStarted,
     this.onCallConnected,
     this.isIncoming = false,
+    this.controller,
   });
 
   @override
@@ -70,9 +76,10 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   @override
   void initState() {
     super.initState();
-    _controller = CallController(
-      apiService: ApiService(baseUrl: SocialIqLiveSdkConfig.apiBaseUrl),
-    );
+    _controller = widget.controller ??
+        CallController(
+          apiService: ApiService(baseUrl: SocialIqLiveSdkConfig.apiBaseUrl),
+        );
     _controller.addListener(_onUpdate);
 
     _pulseController = AnimationController(
