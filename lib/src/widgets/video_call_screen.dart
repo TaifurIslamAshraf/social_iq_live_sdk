@@ -332,7 +332,10 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         ),
       );
     }
-    return VideoTrackRenderer(videoTrack);
+    return VideoTrackRenderer(
+      videoTrack,
+      fit: VideoViewFit.cover,
+    );
   }
 
   Widget _buildLocalVideo() {
@@ -340,10 +343,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     final track = localParticipant?.videoTrackPublications.firstOrNull?.track;
     final videoTrack = track is VideoTrack ? track : null;
     if (videoTrack == null) return const SizedBox.shrink();
-    // Mirror the local preview when using the front camera so the selfie
-    // feed matches what users expect from their device's camera app.
     return VideoTrackRenderer(
       videoTrack,
+      fit: VideoViewFit.cover,
       mirrorMode: VideoViewMirrorMode.auto,
     );
   }
