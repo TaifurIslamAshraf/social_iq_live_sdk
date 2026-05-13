@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../controllers/call_controller.dart';
 import '../models/call_config.dart';
 import '../services/api_service.dart';
+import '../services/call_foreground_service.dart';
 import '../theme/sdk_theme.dart';
 import 'live_broadcast_host.dart' show SocialIqLiveSdkConfig;
 
@@ -44,6 +45,14 @@ class AudioCallScreen extends StatefulWidget {
   /// a fresh token fetch and LiveKit handshake.
   final CallController? controller;
 
+  /// Show a persistent "Tap to return to call" notification with a Hang Up
+  /// button while the call is active. Keeps the audio alive when the user
+  /// navigates away.
+  ///
+  /// Requires foreground-service permissions in AndroidManifest.xml —
+  /// see [CallForegroundService] for the required XML snippet.
+  final bool enableForegroundService;
+
   const AudioCallScreen({
     super.key,
     required this.userToken,
@@ -59,6 +68,7 @@ class AudioCallScreen extends StatefulWidget {
     this.onCallConnected,
     this.isIncoming = false,
     this.controller,
+    this.enableForegroundService = false,
   });
 
   @override
@@ -72,6 +82,9 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   late Animation<double> _pulseAnimation;
   bool _startedFired = false;
   bool _connectedFired = false;
+  bool _fgStarted = false;
+  bool _disposed = false;
+  String? _lastNotificationText;
 
   @override
   void initState() {
@@ -81,6 +94,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
           apiService: ApiService(baseUrl: SocialIqLiveSdkConfig.apiBaseUrl),
         );
     _controller.addListener(_onUpdate);
+    if (widget.enableForegroundService) CallForegroundService.init();
 
     _pulseController = AnimationController(
       vsync: this,
@@ -145,21 +159,75 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     if (!mounted) return;
     setState(() {});
 
-    if (!_startedFired && _controller.callState == CallState.connecting) {
+    final state = _controller.callState;
+
+    if (!_startedFired && state == CallState.connecting) {
       _startedFired = true;
       widget.onCallStarted?.call();
     }
 
-    if (!_connectedFired && _controller.callState == CallState.connected) {
+    if (!_connectedFired && state == CallState.connected) {
       _connectedFired = true;
       widget.onCallConnected?.call();
     }
 
-    if (_controller.callState == CallState.ended) {
+    // Start the FG service the moment the call begins so the ringing phase
+    // is covered (matches the "Tap to return to call • Calling…" screenshot).
+    if (!_fgStarted &&
+        (state == CallState.connecting || state == CallState.connected)) {
+      _fgStarted = true;
+      final initialText = state == CallState.connected
+          ? _controller.formattedDuration
+          : 'Tap to return to call • Calling…';
+      if (widget.enableForegroundService) {
+        CallForegroundService.start(
+          callerName: _displayName(),
+          callType: 'Audio call',
+          statusText: initialText,
+          onHangUp: _safeHangUp,
+        );
+      }
+      _lastNotificationText = initialText;
+    }
+
+    // Dedup notification updates — _onUpdate fires on mute / speaker / etc.
+    if (_fgStarted && widget.enableForegroundService) {
+      final nextText = state == CallState.connected
+          ? _controller.formattedDuration
+          : 'Tap to return to call • Calling…';
+      if (nextText != _lastNotificationText) {
+        _lastNotificationText = nextText;
+        CallForegroundService.updateNotification(text: nextText);
+      }
+    }
+
+    if (state == CallState.ended) {
+      _stopForegroundService();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) Navigator.of(context).pop();
       });
     }
+  }
+
+  /// Invoked from the notification "Hang Up" button. Static callbacks can
+  /// outlive this State, so guard against use-after-dispose.
+  void _safeHangUp() {
+    if (_disposed) return;
+    _endCall();
+  }
+
+  void _stopForegroundService() {
+    if (!_fgStarted) return;
+    _fgStarted = false;
+    if (widget.enableForegroundService) CallForegroundService.stop();
+  }
+
+  String _displayName() {
+    if (widget.isIncoming) {
+      // On the receiver side `receiverName` is *us*, never the caller.
+      return widget.callerName ?? 'Unknown';
+    }
+    return widget.receiverName ?? 'Unknown';
   }
 
   /// Room name independent of caller/receiver order, so both sides agree
@@ -178,6 +246,9 @@ class _AudioCallScreenState extends State<AudioCallScreen>
 
   @override
   void dispose() {
+    _disposed = true;
+    // Safety net — also runs if the user backs out without ending the call.
+    _stopForegroundService();
     _pulseController.dispose();
     _controller.removeListener(_onUpdate);
     _controller.dispose();

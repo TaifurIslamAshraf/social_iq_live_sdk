@@ -16,6 +16,7 @@ export 'src/models/call_config.dart';
 
 // Services
 export 'src/services/api_service.dart';
+export 'src/services/call_foreground_service.dart';
 export 'src/services/livekit_service.dart';
 export 'src/services/socket_service.dart';
 

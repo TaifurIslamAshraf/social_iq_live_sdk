@@ -1,8 +1,11 @@
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:floating/floating.dart';
 import 'package:livekit_client/livekit_client.dart';
 import '../controllers/call_controller.dart';
 import '../models/call_config.dart';
 import '../services/api_service.dart';
+import '../services/call_foreground_service.dart';
 import '../theme/sdk_theme.dart';
 import 'live_broadcast_host.dart' show SocialIqLiveSdkConfig;
 
@@ -33,12 +36,9 @@ class VideoCallScreen extends StatefulWidget {
   final ValueChanged<Duration>? onCallEnded;
 
   /// Called once when the call begins connecting (socket registered, offer sent).
-  /// Use this to update your app state — e.g. mark the user as "on a call",
-  /// start call logging, or hide a dialler UI.
   final VoidCallback? onCallStarted;
 
   /// Called once when both sides are in the LiveKit room and media flows.
-  /// Use this for analytics, call-quality monitoring, etc.
   final VoidCallback? onCallConnected;
 
   /// Set true if answering an incoming call.
@@ -47,9 +47,31 @@ class VideoCallScreen extends StatefulWidget {
   final String? incomingCallerAvatar;
 
   /// Optional pre-warmed controller from [CallController.prepareToAnswer].
-  /// When provided the call connects almost instantly instead of waiting for
-  /// a fresh token fetch and LiveKit handshake.
   final CallController? controller;
+
+  /// Show a persistent "Tap to return to call" notification with a Hang Up
+  /// button while the call is active. Keeps the audio alive when the user
+  /// navigates away.
+  ///
+  /// Requires foreground-service permissions in AndroidManifest.xml —
+  /// see [CallForegroundService] for the required XML snippet.
+  final bool enableForegroundService;
+
+  /// Enable Android Picture-in-Picture (PiP) mode.
+  ///
+  /// When active the user can press the minimize button (↓) to shrink the
+  /// call into a floating window. The app also auto-enters PiP when the user
+  /// navigates home while a call is connected.
+  ///
+  /// Requires `android:supportsPictureInPicture="true"` on the Activity in
+  /// AndroidManifest.xml. **iOS is not supported** — this flag is silently
+  /// ignored on non-Android platforms.
+  final bool enablePiP;
+
+  /// Aspect ratio used when the app enters PiP mode. Defaults to portrait
+  /// (9:16) which fits typical phone video. Use [Rational.landscape] for
+  /// landscape video.
+  final Rational pipAspectRatio;
 
   const VideoCallScreen({
     super.key,
@@ -68,6 +90,9 @@ class VideoCallScreen extends StatefulWidget {
     this.incomingCallerName,
     this.incomingCallerAvatar,
     this.controller,
+    this.enableForegroundService = false,
+    this.enablePiP = false,
+    this.pipAspectRatio = const Rational(9, 16),
   });
 
   @override
@@ -76,8 +101,16 @@ class VideoCallScreen extends StatefulWidget {
 
 class _VideoCallScreenState extends State<VideoCallScreen> {
   late final CallController _controller;
+  final Floating _floating = Floating();
   bool _startedFired = false;
   bool _connectedFired = false;
+  bool _fgStarted = false;
+  bool _pipRegistered = false;
+  bool _disposed = false;
+  String? _lastNotificationText;
+
+  /// PiP is Android-only — the `floating` package is a no-op elsewhere.
+  bool get _pipEffective => widget.enablePiP && Platform.isAndroid;
 
   @override
   void initState() {
@@ -87,21 +120,20 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
           apiService: ApiService(baseUrl: SocialIqLiveSdkConfig.apiBaseUrl),
         );
     _controller.addListener(_onUpdate);
+    if (widget.enableForegroundService) CallForegroundService.init();
     _startCall();
   }
 
   Future<void> _startCall() async {
     try {
-      final room = widget.roomName ?? _deterministicRoom(widget.callerId, widget.receiverId);
+      final room = widget.roomName ??
+          _deterministicRoom(widget.callerId, widget.receiverId);
 
       if (widget.isIncoming) {
-        // isIncoming=true: this device IS the receiver.
-        // widget.callerId  = the person who called us (the original caller)
-        // widget.receiverId = us (receiver of the call)
         await _controller.answerCall(
           userToken: widget.userToken,
-          callerId: widget.callerId,    // original caller's ID
-          receiverId: widget.receiverId, // our own ID
+          callerId: widget.callerId,
+          receiverId: widget.receiverId,
           roomName: room,
           callType: CallType.video,
           livekitUrl: SocialIqLiveSdkConfig.serverUrl,
@@ -141,25 +173,98 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (!mounted) return;
     setState(() {});
 
-    if (!_startedFired && _controller.callState == CallState.connecting) {
+    final state = _controller.callState;
+
+    if (!_startedFired && state == CallState.connecting) {
       _startedFired = true;
       widget.onCallStarted?.call();
     }
 
-    if (!_connectedFired && _controller.callState == CallState.connected) {
+    if (!_connectedFired && state == CallState.connected) {
       _connectedFired = true;
       widget.onCallConnected?.call();
     }
 
-    if (_controller.callState == CallState.ended) {
+    // Start FG service as soon as the call begins (covers ringing phase).
+    if (!_fgStarted &&
+        (state == CallState.connecting || state == CallState.connected)) {
+      _fgStarted = true;
+      final initialText = state == CallState.connected
+          ? _controller.formattedDuration
+          : 'Tap to return to call • Calling…';
+      if (widget.enableForegroundService) {
+        CallForegroundService.start(
+          callerName: _displayName(),
+          callType: 'Video call',
+          statusText: initialText,
+          onHangUp: _safeHangUp,
+        );
+      }
+      _lastNotificationText = initialText;
+      if (_pipEffective && !_pipRegistered) {
+        _pipRegistered = true;
+        // Clear any stale auto-PiP from a previous screen first.
+        _floating.cancelOnLeavePiP().then((_) {
+          if (!_disposed) {
+            _floating.enable(OnLeavePiP(aspectRatio: widget.pipAspectRatio));
+          }
+        });
+      }
+    }
+
+    // Update the notification only when the text actually changes — _onUpdate
+    // fires on mute / camera / participant changes too.
+    if (_fgStarted && widget.enableForegroundService) {
+      final nextText = state == CallState.connected
+          ? _controller.formattedDuration
+          : 'Tap to return to call • Calling…';
+      if (nextText != _lastNotificationText) {
+        _lastNotificationText = nextText;
+        CallForegroundService.updateNotification(text: nextText);
+      }
+    }
+
+    if (state == CallState.ended) {
+      _teardownBackgroundUi();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) Navigator.of(context).pop();
       });
     }
   }
 
-  /// Room name independent of caller/receiver order, so both sides agree
-  /// on the same room regardless of who initiated the call.
+  /// Invoked from the notification "Hang Up" button. Static callbacks can
+  /// outlive this State, so guard against use-after-dispose.
+  void _safeHangUp() {
+    if (_disposed) return;
+    _endCall();
+  }
+
+  void _teardownBackgroundUi() {
+    if (_fgStarted) {
+      _fgStarted = false;
+      if (widget.enableForegroundService) CallForegroundService.stop();
+    }
+    if (_pipRegistered) {
+      _pipRegistered = false;
+      _floating.cancelOnLeavePiP();
+    }
+  }
+
+  String _displayName() {
+    if (widget.isIncoming) {
+      // On the receiver side `receiverName` is *us*, never the caller.
+      return widget.incomingCallerName ?? widget.callerName ?? 'Unknown';
+    }
+    return widget.receiverName ?? 'Unknown';
+  }
+
+  String? _displayAvatar() {
+    if (widget.isIncoming) {
+      return widget.incomingCallerAvatar ?? widget.callerAvatar;
+    }
+    return widget.receiverAvatar;
+  }
+
   static String _deterministicRoom(String a, String b) {
     final ids = [a, b]..sort();
     return 'call_${ids[0]}_${ids[1]}';
@@ -174,6 +279,9 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   @override
   void dispose() {
+    _disposed = true;
+    // Safety net — also runs if the user backs out without ending the call.
+    _teardownBackgroundUi();
     _controller.removeListener(_onUpdate);
     _controller.dispose();
     super.dispose();
@@ -181,15 +289,80 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_pipEffective) {
+      return PiPSwitcher(
+        floating: _floating,
+        childWhenEnabled: _buildPiPContent(),
+        childWhenDisabled: _buildFullScreen(context),
+      );
+    }
+    return _buildFullScreen(context);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PiP compact view (shown when the system shrinks the app window)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildPiPContent() {
+    final remoteParticipants = _controller.livekitService.remoteParticipants;
+    final hasRemoteVideo = remoteParticipants.isNotEmpty &&
+        remoteParticipants.first.videoTrackPublications.firstOrNull?.track
+            is VideoTrack;
+
+    if (hasRemoteVideo) {
+      return Container(
+        color: SdkTheme.backgroundDark,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: VideoTrackRenderer(
+                remoteParticipants
+                    .first.videoTrackPublications.first.track as VideoTrack,
+                fit: VideoViewFit.cover,
+              ),
+            ),
+            Positioned(
+              bottom: 4,
+              left: 0,
+              right: 0,
+              child: Center(child: _pipStatusLabel()),
+            ),
+          ],
+        ),
+      );
+    }
+    return _CompactCallView(
+      name: _displayName(),
+      avatarUrl: _displayAvatar(),
+      statusLabel: _pipStatusLabel(),
+    );
+  }
+
+  Widget _pipStatusLabel() {
+    final text = _controller.callState == CallState.connected
+        ? _controller.formattedDuration
+        : 'Calling…';
+    return Text(
+      text,
+      style: const TextStyle(color: Colors.white70, fontSize: 10),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Full call screen
+  // ─────────────────────────────────────────────────────────────────────────
+
+  Widget _buildFullScreen(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
     final bottomPadding = mediaQuery.padding.bottom;
     final remoteParticipants = _controller.livekitService.remoteParticipants;
+    final avatarUrl = _displayAvatar();
+    final name = _displayName();
 
     return Scaffold(
       backgroundColor: SdkTheme.backgroundDark,
       body: Stack(
         children: [
-          // Remote video (full screen)
           if (remoteParticipants.isNotEmpty)
             Positioned.fill(
               child: _buildRemoteVideo(remoteParticipants.first),
@@ -199,35 +372,30 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // Avatar with pulse animation
-                  _PulsingAvatar(
-                    avatarUrl: widget.receiverAvatar,
-                    name: widget.receiverName ?? 'Calling...',
-                  ),
+                  _PulsingAvatar(avatarUrl: avatarUrl, name: name),
                   const SizedBox(height: 20),
-                  Text(
-                    widget.receiverName ?? 'Unknown',
-                    style: SdkTheme.headingBold,
-                  ),
+                  Text(name, style: SdkTheme.headingBold),
                   const SizedBox(height: 8),
                   Text(
                     _controller.callState == CallState.connecting
                         ? 'Connecting...'
                         : 'Calling...',
-                    style: SdkTheme.bodyMedium.copyWith(color: Colors.white54),
+                    style:
+                        SdkTheme.bodyMedium.copyWith(color: Colors.white54),
                   ),
                 ],
               ),
             ),
 
-          // Local video (PiP - top right corner)
+          // Local video PiP thumbnail (top-right).
           if (_controller.livekitService.localParticipant != null &&
               !_controller.isCameraOff)
             Positioned(
               top: mediaQuery.padding.top + 12,
               right: 12,
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(SdkTheme.radiusMedium),
+                borderRadius:
+                    BorderRadius.circular(SdkTheme.radiusMedium),
                 child: SizedBox(
                   width: 120,
                   height: 160,
@@ -236,7 +404,27 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               ),
             ),
 
-          // Top bar - call duration
+          // Minimize to PiP button (Android only).
+          if (_pipEffective)
+            Positioned(
+              top: mediaQuery.padding.top + 12,
+              left: 12,
+              child: GestureDetector(
+                onTap: () => _floating.enable(
+                    ImmediatePiP(aspectRatio: widget.pipAspectRatio)),
+                child: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.45),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.keyboard_arrow_down,
+                      color: Colors.white, size: 24),
+                ),
+              ),
+            ),
+
+          // Call duration (top-center).
           if (_controller.callState == CallState.connected)
             Positioned(
               top: mediaQuery.padding.top + 12,
@@ -244,10 +432,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               right: 0,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.5),
-                    borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+                    borderRadius:
+                        BorderRadius.circular(SdkTheme.radiusRound),
                   ),
                   child: Text(
                     _controller.formattedDuration,
@@ -257,7 +447,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               ),
             ),
 
-          // Bottom controls
+          // Bottom controls.
           Positioned(
             left: 0,
             right: 0,
@@ -266,7 +456,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
               children: [
                 _CallControlButton(
-                  icon: _controller.isMuted ? Icons.mic_off : Icons.mic,
+                  icon:
+                      _controller.isMuted ? Icons.mic_off : Icons.mic,
                   label: _controller.isMuted ? 'Unmute' : 'Mute',
                   isActive: _controller.isMuted,
                   onTap: _controller.toggleMute,
@@ -301,6 +492,8 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   Widget _buildRemoteVideo(RemoteParticipant participant) {
     final track = participant.videoTrackPublications.firstOrNull?.track;
     final videoTrack = track is VideoTrack ? track : null;
+    final avatarUrl = _displayAvatar();
+    final name = _displayName();
     if (videoTrack == null) {
       return Container(
         color: SdkTheme.backgroundDark,
@@ -310,18 +503,15 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
             children: [
               CircleAvatar(
                 radius: 50,
-                backgroundImage: widget.receiverAvatar != null
-                    ? NetworkImage(widget.receiverAvatar!)
-                    : null,
-                child: widget.receiverAvatar == null
-                    ? const Icon(Icons.person, size: 50, color: Colors.white)
+                backgroundImage:
+                    avatarUrl != null ? NetworkImage(avatarUrl) : null,
+                child: avatarUrl == null
+                    ? const Icon(Icons.person,
+                        size: 50, color: Colors.white)
                     : null,
               ),
               const SizedBox(height: 12),
-              Text(
-                widget.receiverName ?? '',
-                style: SdkTheme.headingBold,
-              ),
+              Text(name, style: SdkTheme.headingBold),
               const SizedBox(height: 4),
               const Text(
                 'Camera Off',
@@ -332,15 +522,14 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
         ),
       );
     }
-    return VideoTrackRenderer(
-      videoTrack,
-      fit: VideoViewFit.cover,
-    );
+    return VideoTrackRenderer(videoTrack, fit: VideoViewFit.cover);
   }
 
   Widget _buildLocalVideo() {
-    final localParticipant = _controller.livekitService.localParticipant;
-    final track = localParticipant?.videoTrackPublications.firstOrNull?.track;
+    final localParticipant =
+        _controller.livekitService.localParticipant;
+    final track =
+        localParticipant?.videoTrackPublications.firstOrNull?.track;
     final videoTrack = track is VideoTrack ? track : null;
     if (videoTrack == null) return const SizedBox.shrink();
     return VideoTrackRenderer(
@@ -351,7 +540,65 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 }
 
-/// Audio call screen with gradient background and centered avatar.
+// ─────────────────────────────────────────────────────────────────────────────
+// Supporting widgets
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compact avatar + name + status — sized for the Android PiP window.
+class _CompactCallView extends StatelessWidget {
+  final String name;
+  final String? avatarUrl;
+  final Widget statusLabel;
+
+  const _CompactCallView({
+    required this.name,
+    required this.avatarUrl,
+    required this.statusLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: SdkTheme.backgroundDark,
+      child: Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 22,
+              backgroundColor: SdkTheme.primaryPink.withValues(alpha: 0.4),
+              backgroundImage:
+                  avatarUrl != null ? NetworkImage(avatarUrl!) : null,
+              child: avatarUrl == null
+                  ? Text(
+                      name.isNotEmpty ? name[0].toUpperCase() : '?',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(height: 4),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 6),
+              child: Text(
+                name,
+                style: const TextStyle(color: Colors.white, fontSize: 11),
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+              ),
+            ),
+            const SizedBox(height: 2),
+            statusLabel,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _PulsingAvatar extends StatefulWidget {
   final String? avatarUrl;
   final String name;
@@ -398,7 +645,8 @@ class _PulsingAvatarState extends State<_PulsingAvatar>
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: SdkTheme.primaryRed.withValues(alpha: 0.3 * _scaleAnimation.value),
+                  color: SdkTheme.primaryRed
+                      .withValues(alpha: 0.3 * _scaleAnimation.value),
                   blurRadius: 30,
                   spreadRadius: 10,
                 ),
@@ -406,13 +654,16 @@ class _PulsingAvatarState extends State<_PulsingAvatar>
             ),
             child: CircleAvatar(
               radius: 60,
-              backgroundColor: SdkTheme.primaryPink.withValues(alpha: 0.3),
+              backgroundColor:
+                  SdkTheme.primaryPink.withValues(alpha: 0.3),
               backgroundImage: widget.avatarUrl != null
                   ? NetworkImage(widget.avatarUrl!)
                   : null,
               child: widget.avatarUrl == null
                   ? Text(
-                      widget.name.isNotEmpty ? widget.name[0].toUpperCase() : '?',
+                      widget.name.isNotEmpty
+                          ? widget.name[0].toUpperCase()
+                          : '?',
                       style: const TextStyle(
                         fontSize: 40,
                         color: Colors.white,
@@ -428,7 +679,6 @@ class _PulsingAvatarState extends State<_PulsingAvatar>
   }
 }
 
-/// Call control button.
 class _CallControlButton extends StatelessWidget {
   final IconData icon;
   final String label;
