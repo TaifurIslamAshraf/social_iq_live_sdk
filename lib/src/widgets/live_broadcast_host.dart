@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import '../controllers/live_controller.dart';
+import '../models/live_config.dart';
 import '../services/api_service.dart';
 import '../theme/sdk_theme.dart';
 import 'comment_overlay.dart';
@@ -58,6 +59,7 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
   late final LiveController _controller;
   DateTime? _startTime;
   bool _isConnecting = true; // true while WebRTC handshake is in progress
+  LiveComment? _replyingTo;
 
   @override
   void initState() {
@@ -146,10 +148,19 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
     super.dispose();
   }
 
+  void _sendCommentFromInput(String text) {
+    _controller.sendComment(text, replyTo: _replyingTo);
+    if (_replyingTo != null) {
+      setState(() => _replyingTo = null);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
     final bottomPad = mq.padding.bottom;
+    final keyboard = mq.viewInsets.bottom;
+    final pinned = _controller.pinnedComment;
 
     return PopScope(
       canPop: false,
@@ -158,6 +169,7 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
       },
       child: Scaffold(
       backgroundColor: Colors.black,
+      resizeToAvoidBottomInset: false,
       body: Stack(
         children: [
           // ── Camera preview ─────────────────────────────────────────────
@@ -227,56 +239,50 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
               ),
             ),
 
+          // ── Top scrim (legibility) ─────────────────────────────────────
+          // A subtle dark gradient under the top bar so white text and
+          // controls stay readable over bright camera frames.
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(child: _TopScrim()),
+          ),
+
+          // ── Bottom scrim (legibility) ──────────────────────────────────
+          const Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(child: _BottomScrim()),
+          ),
+
           // ── Top bar ────────────────────────────────────────────────────
           Positioned(
-            top: mq.padding.top + 8,
+            top: mq.padding.top + 10,
             left: 12,
             right: 12,
             child: Row(
               children: [
-                // LIVE badge
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 6),
-                  decoration: BoxDecoration(
-                    gradient: SdkTheme.liveGradient,
-                    borderRadius:
-                        BorderRadius.circular(SdkTheme.radiusRound),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: Colors.white,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      const Text('LIVE', style: SdkTheme.labelBold),
-                    ],
-                  ),
+                // Host identity chip (avatar + display name)
+                _HostChip(
+                  avatarUrl: widget.avatarUrl,
+                  displayName: widget.displayName,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
+                // LIVE badge with pulsing dot
+                const _LivePill(),
+                const SizedBox(width: 8),
                 // Viewer count
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.5),
-                    borderRadius:
-                        BorderRadius.circular(SdkTheme.radiusRound),
-                  ),
+                _GlassPill(
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.visibility,
-                          color: Colors.white, size: 16),
+                      const Icon(Icons.remove_red_eye_outlined,
+                          color: Colors.white, size: 14),
                       const SizedBox(width: 4),
                       Text(
-                        '${_controller.viewerCount}',
+                        _formatCount(_controller.viewerCount),
                         style: SdkTheme.labelBold,
                       ),
                     ],
@@ -284,26 +290,30 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                 ),
                 const Spacer(),
                 // Close button
-                GestureDetector(
+                _CircleIconButton(
+                  icon: Icons.close,
                   onTap: _confirmEnd,
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.close,
-                        color: Colors.white, size: 22),
-                  ),
                 ),
               ],
             ),
           ),
 
+          // ── Pinned comment banner ──────────────────────────────────────
+          if (pinned != null)
+            Positioned(
+              top: mq.padding.top + 56,
+              left: 12,
+              right: 12,
+              child: PinnedCommentBanner(
+                comment: pinned,
+                onUnpin: _controller.unpinComment,
+              ),
+            ),
+
           // ── Reaction animations ────────────────────────────────────────
           Positioned(
             right: 8,
-            bottom: 160 + bottomPad,
+            bottom: 200 + bottomPad + keyboard,
             child: ReactionAnimation(
                 reactions: _controller.pendingReactions),
           ),
@@ -312,40 +322,45 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
           Positioned(
             left: 0,
             right: 80,
-            bottom: 100 + bottomPad,
-            child: CommentOverlay(comments: _controller.comments),
+            bottom: 140 + bottomPad + keyboard,
+            child: CommentOverlay(
+              comments: _controller.comments,
+              isHost: true,
+              onReply: (c) => setState(() => _replyingTo = c),
+              onPin: _controller.pinComment,
+              onUnpin: _controller.unpinComment,
+            ),
           ),
 
-          // ── Bottom controls ────────────────────────────────────────────
+          // ── Bottom: comment input + controls ──────────────────────────
           Positioned(
             left: 12,
             right: 12,
-            bottom: 20 + bottomPad,
-            child: Row(
+            bottom: 16 + bottomPad + keyboard,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                _ControlButton(
-                  icon: Icons.flip_camera_ios_rounded,
-                  onTap: _controller.switchCamera,
+                CommentInput(
+                  onSubmit: _sendCommentFromInput,
+                  replyingTo: _replyingTo,
+                  onCancelReply: () => setState(() => _replyingTo = null),
                 ),
-                const SizedBox(width: 12),
-                _ControlButton(
-                  icon: _controller.isMuted ? Icons.mic_off : Icons.mic,
-                  isActive: _controller.isMuted,
-                  onTap: _controller.toggleMute,
-                ),
-                const Spacer(),
-                GestureDetector(
-                  onTap: _confirmEnd,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 20, vertical: 10),
-                    decoration: BoxDecoration(
-                      color: SdkTheme.endCallRed,
-                      borderRadius:
-                          BorderRadius.circular(SdkTheme.radiusRound),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    _ControlButton(
+                      icon: Icons.flip_camera_ios_rounded,
+                      onTap: _controller.switchCamera,
                     ),
-                    child: const Text('END', style: SdkTheme.labelBold),
-                  ),
+                    const SizedBox(width: 12),
+                    _ControlButton(
+                      icon: _controller.isMuted ? Icons.mic_off : Icons.mic,
+                      isActive: _controller.isMuted,
+                      onTap: _controller.toggleMute,
+                    ),
+                    const Spacer(),
+                    _EndLiveButton(onTap: _confirmEnd),
+                  ],
                 ),
               ],
             ),
@@ -393,6 +408,9 @@ class _LocalVideoView extends StatelessWidget {
           ? VideoViewMirrorMode.mirror
           : VideoViewMirrorMode.off,
       renderMode: VideoRenderMode.auto,
+      // Fill the screen edge-to-edge regardless of source aspect ratio.
+      // Without this, a 16:9 camera feed letterboxes on a 9:19 phone.
+      fit: VideoViewFit.cover,
     );
   }
 }
@@ -417,17 +435,287 @@ class _ControlButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(12),
+        width: 46,
+        height: 46,
         decoration: BoxDecoration(
           color: isActive
-              ? Colors.white.withValues(alpha: 0.3)
-              : Colors.black.withValues(alpha: 0.5),
+              ? Colors.white.withValues(alpha: 0.28)
+              : Colors.black.withValues(alpha: 0.45),
           shape: BoxShape.circle,
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.18),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.25),
+              blurRadius: 6,
+              offset: const Offset(0, 2),
+            ),
+          ],
         ),
         child: Icon(icon, color: Colors.white, size: 22),
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Top / bottom scrims — keep overlays legible over bright video.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _TopScrim extends StatelessWidget {
+  const _TopScrim();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 140,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.55),
+            Colors.transparent,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BottomScrim extends StatelessWidget {
+  const _BottomScrim();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 260,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            Colors.black.withValues(alpha: 0.65),
+            Colors.transparent,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Top bar pieces
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _GlassPill extends StatelessWidget {
+  final Widget child;
+  const _GlassPill({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.12),
+          width: 1,
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _HostChip extends StatelessWidget {
+  final String? avatarUrl;
+  final String displayName;
+  const _HostChip({required this.avatarUrl, required this.displayName});
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 140),
+      child: _GlassPill(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 12,
+              backgroundColor: SdkTheme.primaryPink.withValues(alpha: 0.3),
+              backgroundImage:
+                  avatarUrl != null ? NetworkImage(avatarUrl!) : null,
+              child: avatarUrl == null
+                  ? Text(
+                      displayName.isNotEmpty
+                          ? displayName[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                displayName,
+                style: SdkTheme.labelBold,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// LIVE pill with a softly pulsing white dot — signals to the host that the
+/// stream is actually transmitting (helps catch silent freezes during testing).
+class _LivePill extends StatefulWidget {
+  const _LivePill();
+
+  @override
+  State<_LivePill> createState() => _LivePillState();
+}
+
+class _LivePillState extends State<_LivePill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: SdkTheme.liveGradient,
+        borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+        boxShadow: [
+          BoxShadow(
+            color: SdkTheme.primaryRed.withValues(alpha: 0.35),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FadeTransition(
+            opacity: Tween(begin: 0.45, end: 1.0).animate(_pulse),
+            child: Container(
+              width: 7,
+              height: 7,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Text('LIVE', style: SdkTheme.labelBold),
+        ],
+      ),
+    );
+  }
+}
+
+class _CircleIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  const _CircleIconButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.45),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.15),
+            width: 1,
+          ),
+        ),
+        child: Icon(icon, color: Colors.white, size: 20),
+      ),
+    );
+  }
+}
+
+class _EndLiveButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _EndLiveButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [SdkTheme.primaryRed, SdkTheme.endCallRed],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+          borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+          boxShadow: [
+            BoxShadow(
+              color: SdkTheme.primaryRed.withValues(alpha: 0.45),
+              blurRadius: 12,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.stop_rounded, color: Colors.white, size: 18),
+            SizedBox(width: 6),
+            Text('END', style: SdkTheme.labelBold),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact-format viewer count: 1.2K, 3.4M, etc.
+String _formatCount(int n) {
+  if (n < 1000) return '$n';
+  if (n < 1000000) {
+    final v = n / 1000.0;
+    return '${v.toStringAsFixed(v >= 10 ? 0 : 1)}K';
+  }
+  final v = n / 1000000.0;
+  return '${v.toStringAsFixed(v >= 10 ? 0 : 1)}M';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -15,6 +15,11 @@ class SocketService extends ChangeNotifier {
   final _viewerCountController = StreamController<int>.broadcast();
   final _connectController = StreamController<void>.broadcast(); // fires on (re)connect
 
+  /// Fires when the host pins or unpins a comment. Payload:
+  /// `{ commentId: String?, pinned: bool }`. A null `commentId` with
+  /// `pinned: false` means the host cleared the pin.
+  final _commentPinController = StreamController<Map<String, dynamic>>.broadcast();
+
   /// Emits the full live rooms list whenever the server pushes a `live_rooms_update` event.
   /// Payload shape: `{ status, total, rooms: [ { room_name, host_uid, host_name,
   ///   host_profile_picture, viewer_count, viewer_uids, started_at } ] }`
@@ -30,6 +35,7 @@ class SocketService extends ChangeNotifier {
   Stream<Map<String, dynamic>> get onReaction => _reactionController.stream;
   Stream<int> get onViewerCountUpdate => _viewerCountController.stream;
   Stream<void> get onConnect => _connectController.stream;  // fires on every connect/reconnect
+  Stream<Map<String, dynamic>> get onCommentPin => _commentPinController.stream;
 
   /// Realtime stream of live rooms. Listen to this instead of polling [ApiService.getLiveRooms].
   /// The server broadcasts an update on every host start/end and viewer join/leave.
@@ -80,6 +86,12 @@ class SocketService extends ChangeNotifier {
 
     _socket!.on('live_reaction', (data) {
       if (data is Map) _reactionController.add(Map<String, dynamic>.from(data));
+    });
+
+    _socket!.on('comment_pinned', (data) {
+      if (data is Map) {
+        _commentPinController.add(Map<String, dynamic>.from(data));
+      }
     });
 
     _socket!.on('viewer_count', (data) {
@@ -155,12 +167,19 @@ class SocketService extends ChangeNotifier {
   }
 
   /// Send a comment to the live stream.
+  ///
+  /// [commentId] is the stable id used by reply / pin so all clients refer to
+  /// the same comment. [replyToCommentId] and [replyToUserName] are populated
+  /// when the host taps "reply" on an existing comment.
   void sendComment({
     required String roomName,
     required String userId,
     required String userName,
     String? userAvatar,
     required String message,
+    String? commentId,
+    String? replyToCommentId,
+    String? replyToUserName,
   }) {
     if (!_isConnected || _socket == null) {
       debugPrint('[SocketService] Cannot send comment: not connected');
@@ -172,6 +191,28 @@ class SocketService extends ChangeNotifier {
       'userName': userName,
       'userAvatar': userAvatar,
       'message': message,
+      'commentId': commentId,
+      'replyToCommentId': replyToCommentId,
+      'replyToUserName': replyToUserName,
+    });
+  }
+
+  /// Host-only: pin a comment. [commentId] null + [pinned] false clears the pin.
+  void pinComment({
+    required String roomName,
+    required String userId,
+    required String? commentId,
+    required bool pinned,
+  }) {
+    if (!_isConnected || _socket == null) {
+      debugPrint('[SocketService] Cannot pin comment: not connected');
+      return;
+    }
+    _socket!.emit('pin_comment', {
+      'room': roomName,
+      'userId': userId,
+      'commentId': commentId,
+      'pinned': pinned,
     });
   }
 
@@ -245,6 +286,7 @@ class SocketService extends ChangeNotifier {
     _reactionController.close();
     _viewerCountController.close();
     _connectController.close();
+    _commentPinController.close();
     _liveRoomsController.close();
     _incomingCallController.close();
     _callAcceptedController.close();

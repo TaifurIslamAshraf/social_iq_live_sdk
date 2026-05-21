@@ -224,90 +224,54 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
               ),
             ),
 
+          // ── Top scrim ──────────────────────────────────────────────────
+          const Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(child: _ViewerTopScrim()),
+          ),
+
+          // ── Bottom scrim ───────────────────────────────────────────────
+          const Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: IgnorePointer(child: _ViewerBottomScrim()),
+          ),
+
           // ── Top bar ────────────────────────────────────────────────────
           Positioned(
-            top: mq.padding.top + 8,
+            top: mq.padding.top + 10,
             left: 12,
             right: 12,
             child: Row(
               children: [
-                // Host info
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.5),
-                    borderRadius:
-                        BorderRadius.circular(SdkTheme.radiusRound),
-                  ),
+                _ViewerHostChip(
+                  avatarUrl: widget.hostAvatar,
+                  displayName: widget.hostName ?? 'Host',
+                ),
+                const SizedBox(width: 8),
+                const _ViewerLivePill(),
+                const SizedBox(width: 8),
+                _ViewerGlassPill(
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      CircleAvatar(
-                        radius: 14,
-                        backgroundImage: widget.hostAvatar != null
-                            ? NetworkImage(widget.hostAvatar!)
-                            : null,
-                        child: widget.hostAvatar == null
-                            ? const Icon(Icons.person,
-                                size: 14, color: Colors.white)
-                            : null,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        widget.hostName ?? 'Host',
-                        style: SdkTheme.labelBold,
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // LIVE badge
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    gradient: SdkTheme.liveGradient,
-                    borderRadius:
-                        BorderRadius.circular(SdkTheme.radiusRound),
-                  ),
-                  child: const Text('LIVE', style: SdkTheme.labelBold),
-                ),
-                const SizedBox(width: 8),
-                // Viewer count
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 10, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.5),
-                    borderRadius:
-                        BorderRadius.circular(SdkTheme.radiusRound),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.visibility,
+                      const Icon(Icons.remove_red_eye_outlined,
                           color: Colors.white, size: 14),
                       const SizedBox(width: 4),
                       Text(
-                        '${_controller.viewerCount}',
+                        _formatViewerCount(_controller.viewerCount),
                         style: SdkTheme.labelBold,
                       ),
                     ],
                   ),
                 ),
                 const Spacer(),
-                GestureDetector(
+                _ViewerCircleIconButton(
+                  icon: Icons.close,
                   onTap: _leaveStream,
-                  child: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.5),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.close,
-                        color: Colors.white, size: 22),
-                  ),
                 ),
               ],
             ),
@@ -454,6 +418,214 @@ class _RemoteVideoView extends StatelessWidget {
     return VideoTrackRenderer(
       videoTrack as VideoTrack,
       renderMode: VideoRenderMode.auto,
+      // Fill the viewport edge-to-edge; without `cover`, source aspect
+      // mismatches with the device produce black letterbox bars.
+      fit: VideoViewFit.cover,
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Viewer-local UI atoms — kept private to the file so we don't leak overlay
+// internals through the SDK barrel export.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ViewerTopScrim extends StatelessWidget {
+  const _ViewerTopScrim();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 140,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [Colors.black.withValues(alpha: 0.55), Colors.transparent],
+        ),
+      ),
+    );
+  }
+}
+
+class _ViewerBottomScrim extends StatelessWidget {
+  const _ViewerBottomScrim();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 260,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [Colors.black.withValues(alpha: 0.65), Colors.transparent],
+        ),
+      ),
+    );
+  }
+}
+
+class _ViewerGlassPill extends StatelessWidget {
+  final Widget child;
+  const _ViewerGlassPill({required this.child});
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.12),
+          width: 1,
+        ),
+      ),
+      child: child,
+    );
+  }
+}
+
+class _ViewerHostChip extends StatelessWidget {
+  final String? avatarUrl;
+  final String displayName;
+  const _ViewerHostChip(
+      {required this.avatarUrl, required this.displayName});
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 150),
+      child: _ViewerGlassPill(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircleAvatar(
+              radius: 12,
+              backgroundColor: SdkTheme.primaryPink.withValues(alpha: 0.3),
+              backgroundImage:
+                  avatarUrl != null ? NetworkImage(avatarUrl!) : null,
+              child: avatarUrl == null
+                  ? Text(
+                      displayName.isNotEmpty
+                          ? displayName[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    )
+                  : null,
+            ),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                displayName,
+                style: SdkTheme.labelBold,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ViewerLivePill extends StatefulWidget {
+  const _ViewerLivePill();
+  @override
+  State<_ViewerLivePill> createState() => _ViewerLivePillState();
+}
+
+class _ViewerLivePillState extends State<_ViewerLivePill>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        gradient: SdkTheme.liveGradient,
+        borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+        boxShadow: [
+          BoxShadow(
+            color: SdkTheme.primaryRed.withValues(alpha: 0.35),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FadeTransition(
+            opacity: Tween(begin: 0.45, end: 1.0).animate(_pulse),
+            child: Container(
+              width: 7,
+              height: 7,
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          const Text('LIVE', style: SdkTheme.labelBold),
+        ],
+      ),
+    );
+  }
+}
+
+class _ViewerCircleIconButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  const _ViewerCircleIconButton({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.45),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.15),
+            width: 1,
+          ),
+        ),
+        child: Icon(icon, color: Colors.white, size: 20),
+      ),
+    );
+  }
+}
+
+String _formatViewerCount(int n) {
+  if (n < 1000) return '$n';
+  if (n < 1000000) {
+    final v = n / 1000.0;
+    return '${v.toStringAsFixed(v >= 10 ? 0 : 1)}K';
+  }
+  final v = n / 1000000.0;
+  return '${v.toStringAsFixed(v >= 10 ? 0 : 1)}M';
 }

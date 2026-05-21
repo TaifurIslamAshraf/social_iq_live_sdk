@@ -26,6 +26,7 @@ class LiveController extends ChangeNotifier {
 
   final List<LiveComment> _comments = [];
   final List<LiveReaction> _pendingReactions = [];
+  LiveComment? _pinnedComment;
   int _viewerCount = 0;
   bool _isLive = false;
   bool _isHost = false;
@@ -40,12 +41,14 @@ class LiveController extends ChangeNotifier {
   StreamSubscription? _commentSub;
   StreamSubscription? _reactionSub;
   StreamSubscription? _viewerCountSub;
+  StreamSubscription? _commentPinSub;
 
   // Public getters
   LiveKitService get livekitService => _livekitService;
   List<LiveComment> get comments => List.unmodifiable(_comments);
   List<LiveReaction> get pendingReactions =>
       List.unmodifiable(_pendingReactions);
+  LiveComment? get pinnedComment => _pinnedComment;
   int get viewerCount => _viewerCount;
   bool get isLive => _isLive;
   bool get isHost => _isHost;
@@ -190,16 +193,23 @@ class LiveController extends ChangeNotifier {
 
   // ── Chat / reactions ──────────────────────────────────────────────────────
 
-  /// Send a comment.
-  void sendComment(String message) {
+  /// Send a comment. Pass [replyTo] to mark it as a reply to another comment;
+  /// the recipient bubble will show "@theirName" context above the message.
+  void sendComment(String message, {LiveComment? replyTo}) {
     if (_roomName == null || _identity == null || message.trim().isEmpty) return;
 
+    final now = DateTime.now();
+    final id = '${_identity!}_${now.microsecondsSinceEpoch}';
+
     final comment = LiveComment(
+      id: id,
       userId: _identity!,
       userName: _displayName ?? _identity!,
       userAvatar: _avatarUrl,
       message: message.trim(),
-      timestamp: DateTime.now(),
+      timestamp: now,
+      replyToCommentId: replyTo?.id,
+      replyToUserName: replyTo?.userName,
     );
 
     _comments.add(comment);
@@ -210,10 +220,63 @@ class LiveController extends ChangeNotifier {
       userId: _identity!,
       userName: _displayName ?? _identity!,
       userAvatar: _avatarUrl,
-      message: message.trim(),
+      message: comment.message,
+      commentId: id,
+      replyToCommentId: comment.replyToCommentId,
+      replyToUserName: comment.replyToUserName,
     );
 
     notifyListeners(); // immediate — user action
+  }
+
+  /// Host-only: pin a comment. Replaces any existing pin.
+  /// Silently no-ops when called from a viewer.
+  void pinComment(LiveComment comment) {
+    if (!_isHost || _roomName == null || _identity == null) return;
+    _applyPin(comment.id);
+    _socketService.pinComment(
+      roomName: _roomName!,
+      userId: _identity!,
+      commentId: comment.id,
+      pinned: true,
+    );
+    notifyListeners();
+  }
+
+  /// Host-only: clear the current pin.
+  void unpinComment() {
+    if (!_isHost || _roomName == null || _identity == null) return;
+    _applyPin(null);
+    _socketService.pinComment(
+      roomName: _roomName!,
+      userId: _identity!,
+      commentId: null,
+      pinned: false,
+    );
+    notifyListeners();
+  }
+
+  /// Update local pinned state. [pinnedId] null clears the pin.
+  void _applyPin(String? pinnedId) {
+    for (var i = 0; i < _comments.length; i++) {
+      final c = _comments[i];
+      final shouldPin = c.id == pinnedId;
+      if (c.isPinned != shouldPin) {
+        _comments[i] = c.copyWith(isPinned: shouldPin);
+      }
+    }
+    if (pinnedId == null) {
+      _pinnedComment = null;
+      return;
+    }
+    for (final c in _comments) {
+      if (c.id == pinnedId) {
+        _pinnedComment = c;
+        return;
+      }
+    }
+    // Pinned comment id refers to one that has aged out of the buffer —
+    // keep showing the prior pinned banner rather than clearing silently.
   }
 
   /// Send a reaction emoji.
@@ -340,15 +403,31 @@ class LiveController extends ChangeNotifier {
     _commentSub = _socketService.onComment.listen((data) {
       if (data['userId'] == _identity) return;
 
+      final now = DateTime.now();
+      // Fall back to a synthetic id if the server (or an older client)
+      // didn't include one — reply / pin can't target it but rendering still works.
+      final id = (data['commentId'] as String?) ??
+          '${data['userId'] ?? 'unknown'}_${now.microsecondsSinceEpoch}';
+
       _comments.add(LiveComment(
+        id: id,
         userId: data['userId'] ?? '',
         userName: data['userName'] ?? 'Unknown',
         userAvatar: data['userAvatar'],
         message: data['message'] ?? '',
-        timestamp: DateTime.now(),
+        timestamp: now,
+        replyToCommentId: data['replyToCommentId'] as String?,
+        replyToUserName: data['replyToUserName'] as String?,
       ));
       if (_comments.length > _maxComments) _comments.removeAt(0);
       notifyListeners(); // user-visible — keep immediate
+    });
+
+    _commentPinSub = _socketService.onCommentPin.listen((data) {
+      final pinned = data['pinned'] == true;
+      final id = data['commentId'] as String?;
+      _applyPin(pinned ? id : null);
+      notifyListeners();
     });
 
     _reactionSub = _socketService.onReaction.listen((data) {
@@ -383,6 +462,7 @@ class LiveController extends ChangeNotifier {
     _commentSub?.cancel();
     _reactionSub?.cancel();
     _viewerCountSub?.cancel();
+    _commentPinSub?.cancel();
     _livekitService.removeListener(_onLiveKitUpdate);
     _livekitService.dispose();
     _socketService.dispose();
