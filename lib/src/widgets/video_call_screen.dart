@@ -1,5 +1,6 @@
 import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:floating/floating.dart';
 import 'package:livekit_client/livekit_client.dart';
 import '../controllers/call_controller.dart';
@@ -107,6 +108,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   bool _fgStarted = false;
   bool _pipRegistered = false;
   bool _disposed = false;
+  bool _callEnded = false;
   String? _lastNotificationText;
 
   /// PiP is Android-only — the `floating` package is a no-op elsewhere.
@@ -227,7 +229,7 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
     if (state == CallState.ended) {
       _teardownBackgroundUi();
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.of(context).pop();
+        _closeScreen();
       });
     }
   }
@@ -271,32 +273,71 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
   }
 
   Future<void> _endCall() async {
+    if (_callEnded) return;
+    _callEnded = true;
     final duration = _controller.callDuration;
     await _controller.endCall();
     widget.onCallEnded?.call(duration);
-    if (mounted) Navigator.of(context).pop();
+    _closeScreen();
+  }
+
+  /// Pop the call screen if there's a route below it; otherwise close the
+  /// activity (sends the user back to their launcher). Without this fallback,
+  /// calls opened directly from a push notification leave a black screen on
+  /// hang-up because Navigator.pop has nothing to reveal.
+  void _closeScreen() {
+    if (!mounted) return;
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      nav.pop();
+    } else {
+      SystemNavigator.pop();
+    }
   }
 
   @override
   void dispose() {
     _disposed = true;
-    // Safety net — also runs if the user backs out without ending the call.
     _teardownBackgroundUi();
     _controller.removeListener(_onUpdate);
+    // Safety net: signal the server if the screen is torn down without an
+    // explicit end (e.g. parent route popped). Fire-and-forget — dispose is
+    // sync and the controller is about to be disposed anyway.
+    if (!_callEnded) {
+      _callEnded = true;
+      _controller.endCall();
+    }
     _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_pipEffective) {
-      return PiPSwitcher(
-        floating: _floating,
-        childWhenEnabled: _buildPiPContent(),
-        childWhenDisabled: _buildFullScreen(context),
-      );
-    }
-    return _buildFullScreen(context);
+    final screen = _pipEffective
+        ? PiPSwitcher(
+            floating: _floating,
+            childWhenEnabled: _buildPiPContent(),
+            childWhenDisabled: _buildFullScreen(context),
+          )
+        : _buildFullScreen(context);
+
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        if (_pipEffective) {
+          final status = await _floating.enable(
+            ImmediatePiP(aspectRatio: widget.pipAspectRatio),
+          );
+          // PiP entered successfully — keep call alive in floating window.
+          if (status == PiPStatus.enabled) return;
+          // PiP unavailable (emulator, old Android, admin-disabled) — fall
+          // through and end the call so the user isn't stuck on screen.
+        }
+        if (mounted) await _endCall();
+      },
+      child: screen,
+    );
   }
 
   // ─────────────────────────────────────────────────────────────────────────

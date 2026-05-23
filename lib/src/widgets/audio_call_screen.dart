@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../controllers/call_controller.dart';
 import '../models/call_config.dart';
 import '../services/api_service.dart';
@@ -84,6 +85,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   bool _connectedFired = false;
   bool _fgStarted = false;
   bool _disposed = false;
+  bool _callEnded = false;
   String? _lastNotificationText;
 
   @override
@@ -204,7 +206,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     if (state == CallState.ended) {
       _stopForegroundService();
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) Navigator.of(context).pop();
+        _closeScreen();
       });
     }
   }
@@ -238,19 +240,40 @@ class _AudioCallScreenState extends State<AudioCallScreen>
   }
 
   Future<void> _endCall() async {
+    if (_callEnded) return;
+    _callEnded = true;
     final duration = _controller.callDuration;
     await _controller.endCall();
     widget.onCallEnded?.call(duration);
-    if (mounted) Navigator.of(context).pop();
+    _closeScreen();
+  }
+
+  /// Pop the call screen if there's a route below it; otherwise close the
+  /// activity (sends the user back to their launcher). Without this fallback,
+  /// calls opened directly from a push notification leave a black screen on
+  /// hang-up because Navigator.pop has nothing to reveal.
+  void _closeScreen() {
+    if (!mounted) return;
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      nav.pop();
+    } else {
+      SystemNavigator.pop();
+    }
   }
 
   @override
   void dispose() {
     _disposed = true;
-    // Safety net — also runs if the user backs out without ending the call.
     _stopForegroundService();
     _pulseController.dispose();
     _controller.removeListener(_onUpdate);
+    // Safety net: signal the server if the screen is torn down without an
+    // explicit end. Fire-and-forget — dispose is sync.
+    if (!_callEnded) {
+      _callEnded = true;
+      _controller.endCall();
+    }
     _controller.dispose();
     super.dispose();
   }
@@ -260,7 +283,15 @@ class _AudioCallScreenState extends State<AudioCallScreen>
     final mediaQuery = MediaQuery.of(context);
     final bottomPadding = mediaQuery.padding.bottom;
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) async {
+        if (didPop) return;
+        // Audio calls have no PiP — back press should end the call cleanly
+        // (notifies the peer instead of silently disposing).
+        if (mounted) await _endCall();
+      },
+      child: Scaffold(
       body: Container(
         decoration: const BoxDecoration(gradient: SdkTheme.audioCallGradient),
         child: SafeArea(
@@ -374,6 +405,7 @@ class _AudioCallScreenState extends State<AudioCallScreen>
             ],
           ),
         ),
+      ),
       ),
     );
   }

@@ -533,7 +533,22 @@ class CallController extends ChangeNotifier {
     });
   }
 
-  void _onLiveKitUpdate() => notifyListeners();
+  void _onLiveKitUpdate() {
+    // If the LiveKit room dropped while we were in an active call (and we're
+    // not just in a transient reconnect), treat it as the peer hanging up.
+    // Without this the caller's UI stays on the connected call screen after
+    // the receiver leaves, because the socket call_ended event isn't always
+    // delivered in time.
+    if (!_livekitService.isConnected &&
+        !_livekitService.isReconnecting &&
+        (_callState == CallState.connected ||
+            _callState == CallState.connecting)) {
+      _callState = CallState.ended;
+      _durationTimer?.cancel();
+      _ringingTimer?.cancel();
+    }
+    notifyListeners();
+  }
 
   @override
   void dispose() {
