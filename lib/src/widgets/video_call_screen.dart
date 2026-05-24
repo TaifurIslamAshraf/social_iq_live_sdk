@@ -326,9 +326,12 @@ class _VideoCallScreenState extends State<VideoCallScreen> {
       onPopInvokedWithResult: (didPop, _) async {
         if (didPop) return;
         if (_pipEffective) {
+          final available = await _floating.isPipAvailable;
           final status = await _floating.enable(
             ImmediatePiP(aspectRatio: widget.pipAspectRatio),
           );
+          debugPrint('[PiP] back-press: isPipAvailable=$available '
+              'enable=$status');
           // PiP entered successfully — keep call alive in floating window.
           if (status == PiPStatus.enabled) return;
           // PiP unavailable (emulator, old Android, admin-disabled) — fall
