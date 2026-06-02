@@ -155,6 +155,17 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
     }
   }
 
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final mq = MediaQuery.of(context);
@@ -321,6 +332,14 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
               onReply: (c) => setState(() => _replyingTo = c),
               onPin: _controller.pinComment,
               onUnpin: _controller.unpinComment,
+              onBlock: (c) {
+                _controller.blockUser(c.userId);
+                _showSnack('${c.userName} blocked');
+              },
+              onReport: (c) {
+                _controller.reportComment(c);
+                _showSnack('Comment reported');
+              },
             ),
           ),
 

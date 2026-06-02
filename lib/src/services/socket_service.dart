@@ -25,6 +25,11 @@ class SocketService extends ChangeNotifier {
   ///   host_profile_picture, viewer_count, viewer_uids, started_at } ] }`
   final _liveRoomsController = StreamController<Map<String, dynamic>>.broadcast();
 
+  /// Fires when the host blocks a user from the live room. Payload:
+  /// `{ blockedUserId: String }`. The blocked user's own client uses this to
+  /// disable commenting; everyone else uses it to drop that user's comments.
+  final _blockedController = StreamController<Map<String, dynamic>>.broadcast();
+
   // Stream controllers for call signaling
   final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
   final _callAcceptedController = StreamController<Map<String, dynamic>>.broadcast();
@@ -40,6 +45,9 @@ class SocketService extends ChangeNotifier {
   /// Realtime stream of live rooms. Listen to this instead of polling [ApiService.getLiveRooms].
   /// The server broadcasts an update on every host start/end and viewer join/leave.
   Stream<Map<String, dynamic>> get onLiveRoomsUpdate => _liveRoomsController.stream;
+
+  /// Fires when the host blocks a user. Payload: `{ blockedUserId: String }`.
+  Stream<Map<String, dynamic>> get onBlocked => _blockedController.stream;
 
   Stream<Map<String, dynamic>> get onIncomingCall => _incomingCallController.stream;
   Stream<Map<String, dynamic>> get onCallAccepted => _callAcceptedController.stream;
@@ -100,6 +108,12 @@ class SocketService extends ChangeNotifier {
     _socket!.on('comment_pinned', (data) {
       if (data is Map) {
         _commentPinController.add(Map<String, dynamic>.from(data));
+      }
+    });
+
+    _socket!.on('live_blocked', (data) {
+      if (data is Map) {
+        _blockedController.add(Map<String, dynamic>.from(data));
       }
     });
 
@@ -265,6 +279,44 @@ class SocketService extends ChangeNotifier {
     });
   }
 
+  /// Host-only: block a user from the live room. The server authorises (only the
+  /// room host may block), drops the blocked user's future comments/reactions,
+  /// and notifies the room via `live_blocked`.
+  void blockLiveUser({
+    required String roomName,
+    required String userId,
+    required String blockedUserId,
+  }) {
+    if (!_isConnected || _socket == null) {
+      debugPrint('[SocketService] Cannot block user: not connected');
+      return;
+    }
+    _socket!.emit('block_live_user', {
+      'room': roomName,
+      'userId': userId,
+      'blockedUserId': blockedUserId,
+    });
+  }
+
+  /// Report a comment to the server for moderation review. Fire-and-forget.
+  void reportLiveComment({
+    required String roomName,
+    required String reporterId,
+    String? commentId,
+    String? commentUserId,
+    String? userName,
+    String? message,
+  }) {
+    _socket?.emit('report_live_comment', {
+      'room': roomName,
+      'reporterId': reporterId,
+      'commentId': commentId,
+      'commentUserId': commentUserId,
+      'userName': userName,
+      'message': message,
+    });
+  }
+
   /// Send a call offer to a receiver.
   void sendCallOffer({
     required String callerId,
@@ -320,6 +372,7 @@ class SocketService extends ChangeNotifier {
     _connectController.close();
     _commentPinController.close();
     _liveRoomsController.close();
+    _blockedController.close();
     _incomingCallController.close();
     _callAcceptedController.close();
     _callRejectedController.close();

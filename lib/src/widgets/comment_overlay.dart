@@ -20,6 +20,10 @@ class CommentOverlay extends StatefulWidget {
   final void Function(LiveComment)? onPin;
   final VoidCallback? onUnpin;
 
+  /// Host moderation actions, shown in the long-press sheet when provided.
+  final void Function(LiveComment)? onBlock;
+  final void Function(LiveComment)? onReport;
+
   /// When non-null, a sticky highlighted row is rendered at the very top of the
   /// comment section (Facebook-live style) and stays put while the rest of the
   /// list scrolls. The unpin affordance on it is host-only (gated on [isHost]).
@@ -33,6 +37,8 @@ class CommentOverlay extends StatefulWidget {
     this.onReply,
     this.onPin,
     this.onUnpin,
+    this.onBlock,
+    this.onReport,
     this.pinnedComment,
   });
 
@@ -158,6 +164,31 @@ class _CommentOverlayState extends State<CommentOverlay> {
                     widget.onUnpin!();
                   },
                 ),
+              if (widget.onReport != null)
+                ListTile(
+                  leading: const Icon(Icons.flag_outlined,
+                      color: Colors.white),
+                  title: const Text('Report comment',
+                      style: TextStyle(color: Colors.white)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onReport!(comment);
+                  },
+                ),
+              if (widget.onBlock != null)
+                ListTile(
+                  leading: const Icon(Icons.block, color: SdkTheme.primaryRed),
+                  title: const Text('Block user',
+                      style: TextStyle(color: SdkTheme.primaryRed)),
+                  subtitle: Text(
+                    'Hide ${comment.userName} and remove their comments',
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onBlock!(comment);
+                  },
+                ),
             ],
           ),
         );
@@ -198,7 +229,9 @@ class _CommentOverlayState extends State<CommentOverlay> {
               onLongPress: widget.isHost &&
                       (widget.onReply != null ||
                           widget.onPin != null ||
-                          widget.onUnpin != null)
+                          widget.onUnpin != null ||
+                          widget.onBlock != null ||
+                          widget.onReport != null)
                   ? () => _showHostActions(context, comment)
                   : null,
             );

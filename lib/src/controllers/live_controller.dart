@@ -35,6 +35,14 @@ class LiveController extends ChangeNotifier {
   String? _displayName;
   String? _avatarUrl;
 
+  /// Users the host has blocked. Their comments/reactions are hidden locally
+  /// and dropped server-side. Held in memory for the duration of the stream.
+  final Set<String> _blockedUserIds = {};
+
+  /// True once *this* client's own user has been blocked by the host — used to
+  /// disable their comment input.
+  bool _isBlocked = false;
+
   VideoQuality _preferredQuality = VideoQuality.MEDIUM;
 
   StreamSubscription? _connectSub;
@@ -42,6 +50,7 @@ class LiveController extends ChangeNotifier {
   StreamSubscription? _reactionSub;
   StreamSubscription? _viewerCountSub;
   StreamSubscription? _commentPinSub;
+  StreamSubscription? _blockedSub;
 
   // Public getters
   LiveKitService get livekitService => _livekitService;
@@ -55,6 +64,10 @@ class LiveController extends ChangeNotifier {
   bool get isMuted => !_livekitService.isMicEnabled;
   bool get isCameraOff => !_livekitService.isCameraEnabled;
   String? get roomName => _roomName;
+
+  /// True once the host has blocked this client's user. The UI disables the
+  /// comment input when this is set.
+  bool get isBlocked => _isBlocked;
 
   LiveController({required ApiService apiService}) : _apiService = apiService;
 
@@ -197,6 +210,8 @@ class LiveController extends ChangeNotifier {
   /// the recipient bubble will show "@theirName" context above the message.
   void sendComment(String message, {LiveComment? replyTo}) {
     if (_roomName == null || _identity == null || message.trim().isEmpty) return;
+    // Blocked users can't post — the server would drop it anyway.
+    if (_isBlocked) return;
 
     final now = DateTime.now();
     final id = '${_identity!}_${now.microsecondsSinceEpoch}';
@@ -257,6 +272,54 @@ class LiveController extends ChangeNotifier {
       commentId: null,
       pinned: false,
     );
+    notifyListeners();
+  }
+
+  // ── Moderation ────────────────────────────────────────────────────────────
+
+  /// Host-only: block a user from the live room. Their existing comments are
+  /// removed locally and future comments/reactions are ignored; the server is
+  /// told so it drops them room-wide and notifies the blocked user.
+  void blockUser(String userId) {
+    if (!_isHost || _roomName == null || _identity == null) return;
+    if (userId.isEmpty || userId == _identity) return;
+
+    _blockedUserIds.add(userId);
+    _comments.removeWhere((c) => c.userId == userId);
+    // If the pinned comment was theirs, clear it.
+    if (_pinnedComment?.userId == userId) {
+      _applyPin(null);
+    }
+
+    _socketService.blockLiveUser(
+      roomName: _roomName!,
+      userId: _identity!,
+      blockedUserId: userId,
+    );
+    notifyListeners();
+  }
+
+  /// Report a comment for moderation review. Fire-and-forget; available to any
+  /// participant.
+  void reportComment(LiveComment comment) {
+    if (_roomName == null || _identity == null) return;
+    _socketService.reportLiveComment(
+      roomName: _roomName!,
+      reporterId: _identity!,
+      commentId: comment.id,
+      commentUserId: comment.userId,
+      userName: comment.userName,
+      message: comment.message,
+    );
+  }
+
+  /// Apply a block received from the server (or echoed back to the host).
+  void _applyBlock(String blockedUserId) {
+    if (blockedUserId.isEmpty) return;
+    _blockedUserIds.add(blockedUserId);
+    _comments.removeWhere((c) => c.userId == blockedUserId);
+    if (_pinnedComment?.userId == blockedUserId) _applyPin(null);
+    if (blockedUserId == _identity) _isBlocked = true;
     notifyListeners();
   }
 
@@ -415,6 +478,8 @@ class LiveController extends ChangeNotifier {
 
     _commentSub = _socketService.onComment.listen((data) {
       if (data['userId'] == _identity) return;
+      // Drop comments from users the host has blocked.
+      if (_blockedUserIds.contains(data['userId'])) return;
 
       final now = DateTime.now();
       // Fall back to a synthetic id if the server (or an older client)
@@ -461,6 +526,7 @@ class LiveController extends ChangeNotifier {
 
     _reactionSub = _socketService.onReaction.listen((data) {
       if (data['userId'] == _identity) return;
+      if (_blockedUserIds.contains(data['userId'])) return;
 
       final reaction = LiveReaction(
         emoji: data['emoji'] ?? '❤️',
@@ -482,6 +548,11 @@ class LiveController extends ChangeNotifier {
       _viewerCount = count;
       _scheduleNotify();
     });
+
+    _blockedSub = _socketService.onBlocked.listen((data) {
+      final blockedId = (data['blockedUserId'] ?? '') as String;
+      _applyBlock(blockedId);
+    });
   }
 
   @override
@@ -492,6 +563,7 @@ class LiveController extends ChangeNotifier {
     _reactionSub?.cancel();
     _viewerCountSub?.cancel();
     _commentPinSub?.cancel();
+    _blockedSub?.cancel();
     _livekitService.removeListener(_onLiveKitUpdate);
     _livekitService.dispose();
     _socketService.dispose();

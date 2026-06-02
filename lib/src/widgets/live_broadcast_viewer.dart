@@ -77,6 +77,11 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   bool _liveEnded = false; // true once host ends stream; shows overlay before pop
   bool _isConnecting = true; // true while WebRTC handshake is in progress
 
+  // Double-tap-to-react: position of the last tap and the live heart pops.
+  Offset? _lastTapPos;
+  final List<Widget> _heartBursts = [];
+  int _heartSeq = 0;
+
   @override
   void initState() {
     super.initState();
@@ -125,6 +130,28 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
         Navigator.of(context).pop();
       }
     });
+  }
+
+  void _onDoubleTapReact() {
+    // Blocked viewers and the pre-join state can't react.
+    if (_controller.isBlocked || _isConnecting) return;
+
+    _controller.sendReaction('❤️');
+
+    final pos = _lastTapPos;
+    if (pos == null) return;
+
+    final key = ValueKey('heart_${_heartSeq++}');
+    late final Widget heart;
+    heart = _TapHeart(
+      key: key,
+      position: pos,
+      onDone: () {
+        if (!mounted) return;
+        setState(() => _heartBursts.removeWhere((w) => w.key == key));
+      },
+    );
+    setState(() => _heartBursts.add(heart));
   }
 
   void _onUpdate() {
@@ -224,6 +251,22 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
               ),
             ),
 
+          // ── Double-tap to react ────────────────────────────────────────
+          // Full-screen gesture layer just above the video. It sits below the
+          // top bar / comment input (added later in the Stack) so those still
+          // receive their own taps. A double-tap sends a ❤️ and pops a heart
+          // at the tap point (TikTok/Facebook-live style).
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onDoubleTapDown: (d) => _lastTapPos = d.localPosition,
+              onDoubleTap: _onDoubleTapReact,
+            ),
+          ),
+
+          // Floating hearts spawned by double-taps.
+          ..._heartBursts,
+
           // ── Top scrim ──────────────────────────────────────────────────
           const Positioned(
             top: 0,
@@ -301,45 +344,48 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
             left: 12,
             right: 12,
             bottom: 16 + bottomPad,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                if (_showReactionBar)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: ReactionBar(
-                      onReaction: (emoji) {
-                        _controller.sendReaction(emoji);
-                        setState(() => _showReactionBar = false);
-                      },
-                    ),
-                  ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: CommentInput(
-                        onSubmit: _controller.sendComment,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    GestureDetector(
-                      onTap: () => setState(
-                          () => _showReactionBar = !_showReactionBar),
-                      child: Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: SdkTheme.primaryRed.withValues(alpha: 0.9),
-                          shape: BoxShape.circle,
+            child: _controller.isBlocked
+                ? const _BlockedNotice()
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      if (_showReactionBar)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: ReactionBar(
+                            onReaction: (emoji) {
+                              _controller.sendReaction(emoji);
+                              setState(() => _showReactionBar = false);
+                            },
+                          ),
                         ),
-                        child: const Icon(Icons.favorite,
-                            color: Colors.white, size: 22),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: CommentInput(
+                              onSubmit: _controller.sendComment,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          GestureDetector(
+                            onTap: () => setState(
+                                () => _showReactionBar = !_showReactionBar),
+                            child: Container(
+                              padding: const EdgeInsets.all(12),
+                              decoration: BoxDecoration(
+                                color:
+                                    SdkTheme.primaryRed.withValues(alpha: 0.9),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const Icon(Icons.favorite,
+                                  color: Colors.white, size: 22),
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+                    ],
+                  ),
           ),
 
           // ── Live ended overlay ─────────────────────────────────────────
@@ -631,4 +677,113 @@ String _formatViewerCount(int n) {
   }
   final v = n / 1000000.0;
   return '${v.toStringAsFixed(v >= 10 ? 0 : 1)}M';
+}
+
+/// A single heart that pops at the double-tap point, drifts up while scaling and
+/// fading, then removes itself via [onDone]. Purely visual feedback — the actual
+/// reaction is broadcast separately through the controller.
+class _TapHeart extends StatefulWidget {
+  final Offset position;
+  final VoidCallback onDone;
+
+  const _TapHeart({super.key, required this.position, required this.onDone});
+
+  @override
+  State<_TapHeart> createState() => _TapHeartState();
+}
+
+class _TapHeartState extends State<_TapHeart>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c;
+  late final Animation<double> _scale;
+  late final Animation<double> _opacity;
+  late final Animation<double> _rise;
+  // Small random horizontal drift + tilt so repeated taps don't stack identically.
+  late final double _drift;
+  late final double _tilt;
+
+  @override
+  void initState() {
+    super.initState();
+    _drift = (widget.position.dx % 7 - 3) * 6.0;
+    _tilt = (widget.position.dx % 5 - 2) * 0.06;
+    _c = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    _scale = TweenSequence<double>([
+      TweenSequenceItem(tween: Tween(begin: 0.4, end: 1.3), weight: 30),
+      TweenSequenceItem(tween: Tween(begin: 1.3, end: 1.0), weight: 70),
+    ]).animate(CurvedAnimation(parent: _c, curve: Curves.easeOut));
+    _opacity = Tween(begin: 1.0, end: 0.0).animate(
+      CurvedAnimation(parent: _c, curve: const Interval(0.5, 1.0)),
+    );
+    _rise = Tween(begin: 0.0, end: -90.0).animate(
+      CurvedAnimation(parent: _c, curve: Curves.easeOut),
+    );
+    _c.forward().whenComplete(widget.onDone);
+  }
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _c,
+      builder: (_, _) {
+        return Positioned(
+          left: widget.position.dx - 24 + _drift,
+          top: widget.position.dy - 24 + _rise.value,
+          child: Opacity(
+            opacity: _opacity.value,
+            child: Transform.rotate(
+              angle: _tilt,
+              child: Transform.scale(
+                scale: _scale.value,
+                child: const Icon(Icons.favorite,
+                    color: SdkTheme.primaryRed, size: 48),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Replaces the comment input for a viewer the host has blocked.
+class _BlockedNotice extends StatelessWidget {
+  const _BlockedNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(SdkTheme.radiusXL),
+        border: Border.all(
+          color: SdkTheme.primaryRed.withValues(alpha: 0.5),
+          width: 1,
+        ),
+      ),
+      child: const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.block, color: Colors.white70, size: 16),
+          SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              "You've been blocked by the host",
+              style: TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
