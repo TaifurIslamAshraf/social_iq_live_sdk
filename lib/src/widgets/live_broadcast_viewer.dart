@@ -290,7 +290,10 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
             left: 0,
             right: 80,
             bottom: 100 + bottomPad,
-            child: CommentOverlay(comments: _controller.comments),
+            child: CommentOverlay(
+              comments: _controller.comments,
+              pinnedComment: _controller.pinnedComment,
+            ),
           ),
 
           // ── Bottom: comment input + reaction bar ───────────────────────

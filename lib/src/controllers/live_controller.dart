@@ -233,12 +233,16 @@ class LiveController extends ChangeNotifier {
   /// Silently no-ops when called from a viewer.
   void pinComment(LiveComment comment) {
     if (!_isHost || _roomName == null || _identity == null) return;
-    _applyPin(comment.id);
+    _applyPin(comment.id, fallback: comment);
     _socketService.pinComment(
       roomName: _roomName!,
       userId: _identity!,
       commentId: comment.id,
       pinned: true,
+      commentUserId: comment.userId,
+      userName: comment.userName,
+      userAvatar: comment.userAvatar,
+      message: comment.message,
     );
     notifyListeners();
   }
@@ -257,7 +261,12 @@ class LiveController extends ChangeNotifier {
   }
 
   /// Update local pinned state. [pinnedId] null clears the pin.
-  void _applyPin(String? pinnedId) {
+  ///
+  /// [fallback] is the full pinned comment as carried by the pin event. It is
+  /// used when [pinnedId] refers to a comment that isn't in this client's
+  /// buffer (e.g. a late joiner who never received the original `live_comment`)
+  /// so the pinned row still renders.
+  void _applyPin(String? pinnedId, {LiveComment? fallback}) {
     for (var i = 0; i < _comments.length; i++) {
       final c = _comments[i];
       final shouldPin = c.id == pinnedId;
@@ -275,8 +284,12 @@ class LiveController extends ChangeNotifier {
         return;
       }
     }
-    // Pinned comment id refers to one that has aged out of the buffer —
-    // keep showing the prior pinned banner rather than clearing silently.
+    // Not in the buffer — use the payload the host sent with the pin so late
+    // joiners (and clients whose buffer aged the comment out) still see it.
+    if (fallback != null) {
+      _pinnedComment = fallback.copyWith(isPinned: true);
+    }
+    // else: keep showing the prior pinned row rather than clearing silently.
   }
 
   /// Send a reaction emoji.
@@ -426,7 +439,23 @@ class LiveController extends ChangeNotifier {
     _commentPinSub = _socketService.onCommentPin.listen((data) {
       final pinned = data['pinned'] == true;
       final id = data['commentId'] as String?;
-      _applyPin(pinned ? id : null);
+
+      // The server may replay the full pinned comment (commentUserId, userName,
+      // userAvatar, message) so clients that never received the original can
+      // still render the pinned row. Build a fallback when those fields exist.
+      LiveComment? fallback;
+      if (pinned && id != null && data['message'] != null) {
+        fallback = LiveComment(
+          id: id,
+          userId: (data['commentUserId'] ?? data['userId'] ?? '') as String,
+          userName: (data['userName'] ?? 'Unknown') as String,
+          userAvatar: data['userAvatar'] as String?,
+          message: (data['message'] ?? '') as String,
+          timestamp: DateTime.now(),
+        );
+      }
+
+      _applyPin(pinned ? id : null, fallback: fallback);
       notifyListeners();
     });
 

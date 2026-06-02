@@ -20,6 +20,11 @@ class CommentOverlay extends StatefulWidget {
   final void Function(LiveComment)? onPin;
   final VoidCallback? onUnpin;
 
+  /// When non-null, a sticky highlighted row is rendered at the very top of the
+  /// comment section (Facebook-live style) and stays put while the rest of the
+  /// list scrolls. The unpin affordance on it is host-only (gated on [isHost]).
+  final LiveComment? pinnedComment;
+
   const CommentOverlay({
     super.key,
     required this.comments,
@@ -28,6 +33,7 @@ class CommentOverlay extends StatefulWidget {
     this.onReply,
     this.onPin,
     this.onUnpin,
+    this.pinnedComment,
   });
 
   @override
@@ -161,7 +167,15 @@ class _CommentOverlayState extends State<CommentOverlay> {
 
   @override
   Widget build(BuildContext context) {
-    return ShaderMask(
+    final pinned = widget.pinnedComment;
+
+    // Don't repeat the pinned comment inside the scrolling list — it already
+    // lives in the sticky header above (matches Facebook-live behaviour).
+    final listComments = pinned == null
+        ? widget.comments
+        : widget.comments.where((c) => c.id != pinned.id).toList();
+
+    final list = ShaderMask(
       shaderCallback: (bounds) {
         return const LinearGradient(
           begin: Alignment.topCenter,
@@ -176,9 +190,9 @@ class _CommentOverlayState extends State<CommentOverlay> {
           controller: _scrollController,
           shrinkWrap: true,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-          itemCount: widget.comments.length,
+          itemCount: listComments.length,
           itemBuilder: (context, index) {
-            final comment = widget.comments[index];
+            final comment = listComments[index];
             return _CommentBubble(
               comment: comment,
               onLongPress: widget.isHost &&
@@ -190,6 +204,90 @@ class _CommentOverlayState extends State<CommentOverlay> {
             );
           },
         ),
+      ),
+    );
+
+    if (pinned == null) return list;
+
+    // Sticky pinned row at the top of the comment section, then the scrolling
+    // list below it.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+          child: _PinnedCommentTile(
+            comment: pinned,
+            onUnpin: widget.isHost ? widget.onUnpin : null,
+          ),
+        ),
+        Flexible(child: list),
+      ],
+    );
+  }
+}
+
+/// Compact pinned-comment row shown sticky at the top of the comment section.
+/// Visually distinct (pin icon + pink tint) so it reads as "pinned by host".
+/// [onUnpin] is only supplied for the host, who gets a tap-to-unpin affordance.
+class _PinnedCommentTile extends StatelessWidget {
+  final LiveComment comment;
+  final VoidCallback? onUnpin;
+
+  const _PinnedCommentTile({required this.comment, this.onUnpin});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: SdkTheme.primaryPink.withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(SdkTheme.radiusLarge),
+        border: Border.all(
+          color: SdkTheme.primaryPink.withValues(alpha: 0.6),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 2),
+            child: Icon(Icons.push_pin, color: Colors.white, size: 14),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  comment.userName,
+                  style: SdkTheme.commentName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  comment.message,
+                  style: SdkTheme.commentText,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          if (onUnpin != null)
+            GestureDetector(
+              onTap: onUnpin,
+              behavior: HitTestBehavior.opaque,
+              child: const Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: Icon(Icons.close, color: Colors.white70, size: 16),
+              ),
+            ),
+        ],
       ),
     );
   }

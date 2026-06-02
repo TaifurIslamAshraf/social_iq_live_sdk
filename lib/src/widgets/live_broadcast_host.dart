@@ -160,7 +160,6 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
     final mq = MediaQuery.of(context);
     final bottomPad = mq.padding.bottom;
     final keyboard = mq.viewInsets.bottom;
-    final pinned = _controller.pinnedComment;
 
     return PopScope(
       canPop: false,
@@ -298,17 +297,9 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
             ),
           ),
 
-          // ── Pinned comment banner ──────────────────────────────────────
-          if (pinned != null)
-            Positioned(
-              top: mq.padding.top + 56,
-              left: 12,
-              right: 12,
-              child: PinnedCommentBanner(
-                comment: pinned,
-                onUnpin: _controller.unpinComment,
-              ),
-            ),
+          // Pinned comment now renders as a sticky row at the top of the
+          // comment section below (Facebook-live style), not as a separate
+          // floating banner.
 
           // ── Reaction animations ────────────────────────────────────────
           Positioned(
@@ -326,6 +317,7 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
             child: CommentOverlay(
               comments: _controller.comments,
               isHost: true,
+              pinnedComment: _controller.pinnedComment,
               onReply: (c) => setState(() => _replyingTo = c),
               onPin: _controller.pinComment,
               onUnpin: _controller.unpinComment,

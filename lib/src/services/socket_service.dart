@@ -55,6 +55,15 @@ class SocketService extends ChangeNotifier {
       url,
       io.OptionBuilder()
           .setTransports(['websocket'])
+          // CRITICAL: force a dedicated connection. Without this, socket.io
+          // multiplexes by host and hands back the *host app's* already-open
+          // socket (the empty-path namespace mismatch means it isn't recognised
+          // as a separate namespace). That socket is already connected, so our
+          // onConnect below never fires → `join_live` is never emitted → the
+          // client never joins the room and receives no comments/reactions/
+          // viewer_count/pins. Forcing a new connection keeps the live socket
+          // isolated from the app's main socket.
+          .enableForceNew()
           .enableAutoConnect()
           .enableReconnection()
           .setExtraHeaders(
@@ -138,6 +147,16 @@ class SocketService extends ChangeNotifier {
         _callEndedController.add(Map<String, dynamic>.from(data));
       }
     });
+
+    // Defensive: if the socket was already connected by the time we attached
+    // (should not happen now that we force a new connection, but guards against
+    // any future reuse), surface a synthetic connect so listeners can join the
+    // room instead of waiting for an onConnect that will never come.
+    if (_socket!.connected) {
+      _isConnected = true;
+      _connectController.add(null);
+      notifyListeners();
+    }
   }
 
   /// Register this user on the socket server so they can receive incoming calls.
@@ -198,11 +217,20 @@ class SocketService extends ChangeNotifier {
   }
 
   /// Host-only: pin a comment. [commentId] null + [pinned] false clears the pin.
+  ///
+  /// The full comment fields ([commentUserId], [userName], [userAvatar],
+  /// [message]) are sent alongside the id so the server can replay the pinned
+  /// comment to late joiners who never received the original `live_comment`.
+  /// They are omitted when clearing the pin.
   void pinComment({
     required String roomName,
     required String userId,
     required String? commentId,
     required bool pinned,
+    String? commentUserId,
+    String? userName,
+    String? userAvatar,
+    String? message,
   }) {
     if (!_isConnected || _socket == null) {
       debugPrint('[SocketService] Cannot pin comment: not connected');
@@ -213,6 +241,10 @@ class SocketService extends ChangeNotifier {
       'userId': userId,
       'commentId': commentId,
       'pinned': pinned,
+      'commentUserId': commentUserId,
+      'userName': userName,
+      'userAvatar': userAvatar,
+      'message': message,
     });
   }
 
