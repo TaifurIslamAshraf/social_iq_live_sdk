@@ -30,6 +30,12 @@ class SocketService extends ChangeNotifier {
   /// disable commenting; everyone else uses it to drop that user's comments.
   final _blockedController = StreamController<Map<String, dynamic>>.broadcast();
 
+  /// Fires once on join with the room's recent comments so a late joiner sees
+  /// an active feed. Payload: `{ comments: [ {commentId, userId, userName,
+  /// userAvatar, message, ...} ] }`.
+  final _commentHistoryController =
+      StreamController<List<Map<String, dynamic>>>.broadcast();
+
   // Stream controllers for call signaling
   final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
   final _callAcceptedController = StreamController<Map<String, dynamic>>.broadcast();
@@ -48,6 +54,10 @@ class SocketService extends ChangeNotifier {
 
   /// Fires when the host blocks a user. Payload: `{ blockedUserId: String }`.
   Stream<Map<String, dynamic>> get onBlocked => _blockedController.stream;
+
+  /// Emits the room's recent comments once on join (oldest first).
+  Stream<List<Map<String, dynamic>>> get onCommentHistory =>
+      _commentHistoryController.stream;
 
   Stream<Map<String, dynamic>> get onIncomingCall => _incomingCallController.stream;
   Stream<Map<String, dynamic>> get onCallAccepted => _callAcceptedController.stream;
@@ -114,6 +124,16 @@ class SocketService extends ChangeNotifier {
     _socket!.on('live_blocked', (data) {
       if (data is Map) {
         _blockedController.add(Map<String, dynamic>.from(data));
+      }
+    });
+
+    _socket!.on('live_comment_history', (data) {
+      if (data is Map && data['comments'] is List) {
+        final list = (data['comments'] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+        _commentHistoryController.add(list);
       }
     });
 
@@ -373,6 +393,7 @@ class SocketService extends ChangeNotifier {
     _commentPinController.close();
     _liveRoomsController.close();
     _blockedController.close();
+    _commentHistoryController.close();
     _incomingCallController.close();
     _callAcceptedController.close();
     _callRejectedController.close();

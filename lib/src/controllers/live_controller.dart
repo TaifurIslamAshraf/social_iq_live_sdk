@@ -24,6 +24,13 @@ class LiveController extends ChangeNotifier {
   Timer? _throttleTimer;
   bool _pendingNotify = false;
 
+  // ── Host-presence grace ─────────────────────────────────────────────────────
+  /// A viewer waits this long before concluding the host has actually left.
+  /// Rides out transient blips — the viewer's own reconnect or a brief host
+  /// track renegotiation — that would otherwise look like the stream ending.
+  static const Duration _hostGoneGrace = Duration(seconds: 6);
+  Timer? _hostGoneTimer;
+
   final List<LiveComment> _comments = [];
   final List<LiveReaction> _pendingReactions = [];
   LiveComment? _pinnedComment;
@@ -51,6 +58,7 @@ class LiveController extends ChangeNotifier {
   StreamSubscription? _viewerCountSub;
   StreamSubscription? _commentPinSub;
   StreamSubscription? _blockedSub;
+  StreamSubscription? _commentHistorySub;
 
   // Public getters
   LiveKitService get livekitService => _livekitService;
@@ -424,6 +432,7 @@ class LiveController extends ChangeNotifier {
     }
 
     _throttleTimer?.cancel();
+    _hostGoneTimer?.cancel();
     _livekitService.removeListener(_onLiveKitUpdate);
     await _livekitService.disconnect();
     _socketService.disconnect();
@@ -450,23 +459,40 @@ class LiveController extends ChangeNotifier {
       }
     }
 
-    // Detect host disconnection for viewers.
-    // Two cases trigger this:
-    //  a) Host participant left but room is still open  → remoteParticipants.isEmpty
-    //  b) Host ended via API (room closed server-side) → room disconnected,
-    //     remoteParticipants may not be empty yet due to the race between
-    //     RoomDisconnectedEvent and the participant list being cleared.
-    //     Checking !isConnected catches this second case.
-    if (!_isHost && _isLive &&
-        (_livekitService.remoteParticipants.isEmpty ||
-            !_livekitService.isConnected)) {
-      _isLive = false;
-      notifyListeners(); // immediate — navigation-critical
-      return;
+    // Detect host disconnection for viewers — but tolerate transient blips.
+    // The host looks "gone" when either:
+    //  a) the host participant left the room  → remoteParticipants.isEmpty
+    //  b) the room itself disconnected         → !isConnected
+    // Both also fire briefly during a viewer's own reconnect or a host track
+    // renegotiation on a perfectly healthy stream. So instead of ending
+    // immediately, start a grace timer and only confirm if it persists.
+    if (!_isHost && _isLive) {
+      final hostSeemsGone = _livekitService.remoteParticipants.isEmpty ||
+          !_livekitService.isConnected;
+      if (hostSeemsGone) {
+        _hostGoneTimer ??= Timer(_hostGoneGrace, _confirmHostGone);
+      } else {
+        // Recovered before the grace period elapsed — cancel the pending end.
+        _hostGoneTimer?.cancel();
+        _hostGoneTimer = null;
+      }
     }
 
     // All other LiveKit events are throttled to avoid widget storm.
     _scheduleNotify();
+  }
+
+  /// Runs after the grace period with the host still apparently gone. Re-checks
+  /// live state so a last-moment recovery isn't missed before ending the stream.
+  void _confirmHostGone() {
+    _hostGoneTimer = null;
+    if (_isHost || !_isLive) return;
+    final stillGone = _livekitService.remoteParticipants.isEmpty ||
+        !_livekitService.isConnected;
+    if (stillGone) {
+      _isLive = false;
+      notifyListeners(); // immediate — navigation-critical
+    }
   }
 
   void _setupSocketListeners() {
@@ -553,17 +579,54 @@ class LiveController extends ChangeNotifier {
       final blockedId = (data['blockedUserId'] ?? '') as String;
       _applyBlock(blockedId);
     });
+
+    _commentHistorySub = _socketService.onCommentHistory.listen((items) {
+      if (items.isEmpty) return;
+
+      final existingIds = _comments.map((c) => c.id).toSet();
+      final history = <LiveComment>[];
+      for (final data in items) {
+        final userId = (data['userId'] ?? '') as String;
+        if (_blockedUserIds.contains(userId)) continue;
+
+        final id = (data['commentId'] as String?) ??
+            '${userId}_${history.length}';
+        if (!existingIds.add(id)) continue; // skip dupes already shown
+
+        history.add(LiveComment(
+          id: id,
+          userId: userId,
+          userName: (data['userName'] ?? 'Unknown') as String,
+          userAvatar: data['userAvatar'] as String?,
+          message: (data['message'] ?? '') as String,
+          timestamp: DateTime.now(),
+          replyToCommentId: data['replyToCommentId'] as String?,
+          replyToUserName: data['replyToUserName'] as String?,
+        ));
+      }
+      if (history.isEmpty) return;
+
+      // History is older than anything that arrived since connect, so it goes
+      // in front. Then cap to the buffer size, keeping the newest (tail).
+      _comments.insertAll(0, history);
+      if (_comments.length > _maxComments) {
+        _comments.removeRange(0, _comments.length - _maxComments);
+      }
+      notifyListeners();
+    });
   }
 
   @override
   void dispose() {
     _throttleTimer?.cancel();
+    _hostGoneTimer?.cancel();
     _connectSub?.cancel();
     _commentSub?.cancel();
     _reactionSub?.cancel();
     _viewerCountSub?.cancel();
     _commentPinSub?.cancel();
     _blockedSub?.cancel();
+    _commentHistorySub?.cancel();
     _livekitService.removeListener(_onLiveKitUpdate);
     _livekitService.dispose();
     _socketService.dispose();
