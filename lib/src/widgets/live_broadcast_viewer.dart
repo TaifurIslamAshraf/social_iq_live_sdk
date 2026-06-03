@@ -406,7 +406,11 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
             right: 12,
             bottom: 16 + bottomPad,
             child: _controller.isBlocked
-                ? const _BlockedNotice()
+                ? const _BlockedNotice(
+                    message: "You've been blocked by the host")
+                : _controller.isCommentMuted
+                ? const _BlockedNotice(
+                    message: "The host has blocked you from commenting")
                 : Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.end,
@@ -817,9 +821,10 @@ class _TapHeartState extends State<_TapHeart>
   }
 }
 
-/// Replaces the comment input for a viewer the host has blocked.
+/// Replaces the comment input for a viewer the host has blocked or muted.
 class _BlockedNotice extends StatelessWidget {
-  const _BlockedNotice();
+  final String message;
+  const _BlockedNotice({required this.message});
 
   @override
   Widget build(BuildContext context) {
@@ -833,15 +838,15 @@ class _BlockedNotice extends StatelessWidget {
           width: 1,
         ),
       ),
-      child: const Row(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.block, color: Colors.white70, size: 16),
-          SizedBox(width: 8),
+          const Icon(Icons.block, color: Colors.white70, size: 16),
+          const SizedBox(width: 8),
           Flexible(
             child: Text(
-              "You've been blocked by the host",
-              style: TextStyle(color: Colors.white70, fontSize: 13),
+              message,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
             ),
           ),
         ],

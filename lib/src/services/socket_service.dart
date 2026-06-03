@@ -49,6 +49,14 @@ class SocketService extends ChangeNotifier {
   final _banBlockedController =
       StreamController<Map<String, dynamic>>.broadcast();
 
+  /// Fires when the host comment-mutes a user. Payload: `{ targetUserId }`.
+  final _commentMutedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
+  /// Fires when the host deletes a comment. Payload: `{ commentId }`.
+  final _commentDeletedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
   // Stream controllers for call signaling
   final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
   final _callAcceptedController = StreamController<Map<String, dynamic>>.broadcast();
@@ -81,6 +89,14 @@ class SocketService extends ChangeNotifier {
   /// Fires when a banned user is refused entry. Payload: `{ message: String }`.
   Stream<Map<String, dynamic>> get onBanBlocked =>
       _banBlockedController.stream;
+
+  /// Fires when the host comment-mutes a user. Payload: `{ targetUserId }`.
+  Stream<Map<String, dynamic>> get onCommentMuted =>
+      _commentMutedController.stream;
+
+  /// Fires when the host deletes a comment. Payload: `{ commentId }`.
+  Stream<Map<String, dynamic>> get onCommentDeleted =>
+      _commentDeletedController.stream;
 
   Stream<Map<String, dynamic>> get onIncomingCall => _incomingCallController.stream;
   Stream<Map<String, dynamic>> get onCallAccepted => _callAcceptedController.stream;
@@ -171,6 +187,18 @@ class SocketService extends ChangeNotifier {
     _socket!.on('live_ban_blocked', (data) {
       if (data is Map) {
         _banBlockedController.add(Map<String, dynamic>.from(data));
+      }
+    });
+
+    _socket!.on('live_comment_muted', (data) {
+      if (data is Map) {
+        _commentMutedController.add(Map<String, dynamic>.from(data));
+      }
+    });
+
+    _socket!.on('live_comment_deleted', (data) {
+      if (data is Map) {
+        _commentDeletedController.add(Map<String, dynamic>.from(data));
       }
     });
 
@@ -384,6 +412,34 @@ class SocketService extends ChangeNotifier {
     });
   }
 
+  /// Host-only: comment-block (mute) a user for the live session.
+  void muteLiveUser({
+    required String roomName,
+    required String userId,
+    required String targetUserId,
+  }) {
+    if (!_isConnected || _socket == null) return;
+    _socket!.emit('mute_live_user', {
+      'room': roomName,
+      'userId': userId,
+      'targetUserId': targetUserId,
+    });
+  }
+
+  /// Host-only: delete a single comment for everyone in the room.
+  void deleteLiveComment({
+    required String roomName,
+    required String userId,
+    required String commentId,
+  }) {
+    if (!_isConnected || _socket == null) return;
+    _socket!.emit('delete_live_comment', {
+      'room': roomName,
+      'userId': userId,
+      'commentId': commentId,
+    });
+  }
+
   /// Report a comment to the server for moderation review. Fire-and-forget.
   void reportLiveComment({
     required String roomName,
@@ -463,6 +519,8 @@ class SocketService extends ChangeNotifier {
     _kickedController.close();
     _bannedController.close();
     _banBlockedController.close();
+    _commentMutedController.close();
+    _commentDeletedController.close();
     _incomingCallController.close();
     _callAcceptedController.close();
     _callRejectedController.close();

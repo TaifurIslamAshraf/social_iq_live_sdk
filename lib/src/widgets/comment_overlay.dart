@@ -25,6 +25,8 @@ class CommentOverlay extends StatefulWidget {
   final void Function(LiveComment)? onReport;
   final void Function(LiveComment)? onKick;
   final void Function(LiveComment)? onBan;
+  final void Function(LiveComment)? onMute;
+  final void Function(LiveComment)? onDelete;
 
   /// When non-null, a sticky highlighted row is rendered at the very top of the
   /// comment section (Facebook-live style) and stays put while the rest of the
@@ -43,6 +45,8 @@ class CommentOverlay extends StatefulWidget {
     this.onReport,
     this.onKick,
     this.onBan,
+    this.onMute,
+    this.onDelete,
     this.pinnedComment,
   });
 
@@ -89,9 +93,13 @@ class _CommentOverlayState extends State<CommentOverlay> {
         borderRadius:
             BorderRadius.vertical(top: Radius.circular(SdkTheme.radiusLarge)),
       ),
+      // Many moderation actions can be present — allow the sheet to grow and
+      // scroll instead of overflowing on small screens.
+      isScrollControlled: true,
       builder: (ctx) {
         return SafeArea(
-          child: Column(
+          child: SingleChildScrollView(
+            child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Padding(
@@ -145,6 +153,31 @@ class _CommentOverlayState extends State<CommentOverlay> {
                   onTap: () {
                     Navigator.pop(ctx);
                     widget.onReply!(comment);
+                  },
+                ),
+              if (widget.onDelete != null)
+                ListTile(
+                  leading: const Icon(Icons.delete_outline, color: Colors.white),
+                  title: const Text('Delete comment',
+                      style: TextStyle(color: Colors.white)),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onDelete!(comment);
+                  },
+                ),
+              if (widget.onMute != null)
+                ListTile(
+                  leading: const Icon(Icons.comments_disabled_outlined,
+                      color: Colors.white),
+                  title: const Text('Block comments',
+                      style: TextStyle(color: Colors.white)),
+                  subtitle: Text(
+                    "Stop ${comment.userName} from commenting",
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onMute!(comment);
                   },
                 ),
               if (!comment.isPinned && widget.onPin != null)
@@ -223,6 +256,7 @@ class _CommentOverlayState extends State<CommentOverlay> {
                 ),
             ],
           ),
+          ),
         );
       },
     );
@@ -265,7 +299,9 @@ class _CommentOverlayState extends State<CommentOverlay> {
                           widget.onBlock != null ||
                           widget.onReport != null ||
                           widget.onKick != null ||
-                          widget.onBan != null)
+                          widget.onBan != null ||
+                          widget.onMute != null ||
+                          widget.onDelete != null)
                   ? () => _showHostActions(context, comment)
                   : null,
             );

@@ -50,6 +50,10 @@ class LiveController extends ChangeNotifier {
   /// disable their comment input.
   bool _isBlocked = false;
 
+  /// True once the host has comment-muted *this* client. They can still watch
+  /// and react, but their comment box is disabled.
+  bool _isCommentMuted = false;
+
   /// Set when this viewer is removed from the live by the host. One of
   /// `'kicked'` or `'banned'`; null otherwise. The viewer UI reads this to show
   /// the right message before leaving.
@@ -66,6 +70,9 @@ class LiveController extends ChangeNotifier {
   StreamSubscription? _commentHistorySub;
   StreamSubscription? _kickedSub;
   StreamSubscription? _bannedSub;
+  StreamSubscription? _banBlockedSub;
+  StreamSubscription? _commentMutedSub;
+  StreamSubscription? _commentDeletedSub;
 
   // Public getters
   LiveKitService get livekitService => _livekitService;
@@ -83,6 +90,10 @@ class LiveController extends ChangeNotifier {
   /// True once the host has blocked this client's user. The UI disables the
   /// comment input when this is set.
   bool get isBlocked => _isBlocked;
+
+  /// True once the host has comment-muted this client. The UI disables the
+  /// comment input (but the viewer can still watch and react).
+  bool get isCommentMuted => _isCommentMuted;
 
   /// Why this viewer was removed from the live (`'kicked'` / `'banned'`), or
   /// null if they weren't. The viewer screen shows the matching message.
@@ -229,8 +240,8 @@ class LiveController extends ChangeNotifier {
   /// the recipient bubble will show "@theirName" context above the message.
   void sendComment(String message, {LiveComment? replyTo}) {
     if (_roomName == null || _identity == null || message.trim().isEmpty) return;
-    // Blocked users can't post — the server would drop it anyway.
-    if (_isBlocked) return;
+    // Blocked or comment-muted users can't post — the server drops it anyway.
+    if (_isBlocked || _isCommentMuted) return;
 
     final now = DateTime.now();
     final id = '${_identity!}_${now.microsecondsSinceEpoch}';
@@ -361,6 +372,36 @@ class LiveController extends ChangeNotifier {
     _comments.removeWhere((c) => c.userId == targetUserId);
     if (_pinnedComment?.userId == targetUserId) _applyPin(null);
     notifyListeners();
+  }
+
+  /// Host-only: comment-block (mute) a user. They keep watching/reacting but
+  /// their comment box is disabled and future comments are dropped.
+  void muteUser(String userId) {
+    if (!_isHost || _roomName == null || _identity == null) return;
+    if (userId.isEmpty || userId == _identity) return;
+    _socketService.muteLiveUser(
+      roomName: _roomName!,
+      userId: _identity!,
+      targetUserId: userId,
+    );
+  }
+
+  /// Host-only: delete a single comment for everyone.
+  void deleteComment(LiveComment comment) {
+    if (!_isHost || _roomName == null || _identity == null) return;
+    _removeCommentById(comment.id);
+    _socketService.deleteLiveComment(
+      roomName: _roomName!,
+      userId: _identity!,
+      commentId: comment.id,
+    );
+    notifyListeners();
+  }
+
+  /// Remove a comment by id locally; clears the pin if it was the pinned one.
+  void _removeCommentById(String commentId) {
+    _comments.removeWhere((c) => c.id == commentId);
+    if (_pinnedComment?.id == commentId) _applyPin(null);
   }
 
   /// Report a comment for moderation review. Fire-and-forget; available to any
@@ -644,6 +685,27 @@ class LiveController extends ChangeNotifier {
       _applyRemoval((data['targetUserId'] ?? '') as String, 'banned');
     });
 
+    // Server refused this client's join because they're banned (covers the
+    // race where the ban lands between token issuance and join_live).
+    _banBlockedSub = _socketService.onBanBlocked.listen((_) {
+      if (_identity != null) _applyRemoval(_identity!, 'banned');
+    });
+
+    _commentMutedSub = _socketService.onCommentMuted.listen((data) {
+      final targetId = (data['targetUserId'] ?? '') as String;
+      if (targetId.isNotEmpty && targetId == _identity) {
+        _isCommentMuted = true;
+        notifyListeners();
+      }
+    });
+
+    _commentDeletedSub = _socketService.onCommentDeleted.listen((data) {
+      final commentId = (data['commentId'] ?? '') as String;
+      if (commentId.isEmpty) return;
+      _removeCommentById(commentId);
+      notifyListeners();
+    });
+
     _commentHistorySub = _socketService.onCommentHistory.listen((items) {
       if (items.isEmpty) return;
 
@@ -693,6 +755,9 @@ class LiveController extends ChangeNotifier {
     _commentHistorySub?.cancel();
     _kickedSub?.cancel();
     _bannedSub?.cancel();
+    _banBlockedSub?.cancel();
+    _commentMutedSub?.cancel();
+    _commentDeletedSub?.cancel();
     _livekitService.removeListener(_onLiveKitUpdate);
     _livekitService.dispose();
     _socketService.dispose();

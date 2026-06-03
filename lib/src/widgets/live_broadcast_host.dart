@@ -354,6 +354,14 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                 _controller.banUser(c.userId);
                 _showSnack('${c.userName} banned from this live');
               },
+              onMute: (c) {
+                _controller.muteUser(c.userId);
+                _showSnack("${c.userName}'s comments blocked");
+              },
+              onDelete: (c) {
+                _controller.deleteComment(c);
+                _showSnack('Comment deleted');
+              },
             ),
           ),
 
