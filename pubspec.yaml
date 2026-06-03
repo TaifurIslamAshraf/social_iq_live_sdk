@@ -16,6 +16,7 @@ dependencies:
   socket_io_client: ^3.0.2
   flutter_foreground_task: ^8.17.0
   floating: ^6.0.0
+  wakelock_plus: ^1.2.0
 
 dev_dependencies:
   flutter_test:

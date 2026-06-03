@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../controllers/live_controller.dart';
 import '../services/api_service.dart';
 import '../theme/sdk_theme.dart';
@@ -85,6 +86,9 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   @override
   void initState() {
     super.initState();
+    // Keep the screen awake while watching so it doesn't sleep on the system
+    // display timeout (the viewer path previously had no wakelock at all).
+    WakelockPlus.enable();
     _controller = LiveController(
       apiService: ApiService(baseUrl: SocialIqLiveSdkConfig.apiBaseUrl),
     );
@@ -173,6 +177,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
 
   @override
   void dispose() {
+    WakelockPlus.disable();
     _controller.removeListener(_onUpdate);
     _controller.dispose();
     super.dispose();
