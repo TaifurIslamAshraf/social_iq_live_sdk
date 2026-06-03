@@ -50,6 +50,11 @@ class LiveController extends ChangeNotifier {
   /// disable their comment input.
   bool _isBlocked = false;
 
+  /// Set when this viewer is removed from the live by the host. One of
+  /// `'kicked'` or `'banned'`; null otherwise. The viewer UI reads this to show
+  /// the right message before leaving.
+  String? _removedReason;
+
   VideoQuality _preferredQuality = VideoQuality.MEDIUM;
 
   StreamSubscription? _connectSub;
@@ -59,6 +64,8 @@ class LiveController extends ChangeNotifier {
   StreamSubscription? _commentPinSub;
   StreamSubscription? _blockedSub;
   StreamSubscription? _commentHistorySub;
+  StreamSubscription? _kickedSub;
+  StreamSubscription? _bannedSub;
 
   // Public getters
   LiveKitService get livekitService => _livekitService;
@@ -76,6 +83,10 @@ class LiveController extends ChangeNotifier {
   /// True once the host has blocked this client's user. The UI disables the
   /// comment input when this is set.
   bool get isBlocked => _isBlocked;
+
+  /// Why this viewer was removed from the live (`'kicked'` / `'banned'`), or
+  /// null if they weren't. The viewer screen shows the matching message.
+  String? get removedReason => _removedReason;
 
   LiveController({required ApiService apiService}) : _apiService = apiService;
 
@@ -304,6 +315,51 @@ class LiveController extends ChangeNotifier {
       userId: _identity!,
       blockedUserId: userId,
     );
+    notifyListeners();
+  }
+
+  /// Host-only: kick a user from the current live. They may rejoin.
+  void kickUser(String userId) {
+    if (!_isHost || _roomName == null || _identity == null) return;
+    if (userId.isEmpty || userId == _identity) return;
+    _comments.removeWhere((c) => c.userId == userId);
+    if (_pinnedComment?.userId == userId) _applyPin(null);
+    _socketService.kickLiveUser(
+      roomName: _roomName!,
+      userId: _identity!,
+      targetUserId: userId,
+    );
+    notifyListeners();
+  }
+
+  /// Host-only: ban a user from this live session. They cannot rejoin until the
+  /// host ends the broadcast.
+  void banUser(String userId) {
+    if (!_isHost || _roomName == null || _identity == null) return;
+    if (userId.isEmpty || userId == _identity) return;
+    _comments.removeWhere((c) => c.userId == userId);
+    if (_pinnedComment?.userId == userId) _applyPin(null);
+    _socketService.banLiveUser(
+      roomName: _roomName!,
+      userId: _identity!,
+      targetUserId: userId,
+    );
+    notifyListeners();
+  }
+
+  /// Apply a kick/ban received from the server. If it targets this client, mark
+  /// it removed so the viewer screen leaves with the right message; otherwise
+  /// just drop that user's comments locally.
+  void _applyRemoval(String targetUserId, String reason) {
+    if (targetUserId.isEmpty) return;
+    if (targetUserId == _identity) {
+      _removedReason = reason;
+      _isLive = false;
+      notifyListeners(); // immediate — navigation-critical
+      return;
+    }
+    _comments.removeWhere((c) => c.userId == targetUserId);
+    if (_pinnedComment?.userId == targetUserId) _applyPin(null);
     notifyListeners();
   }
 
@@ -580,6 +636,14 @@ class LiveController extends ChangeNotifier {
       _applyBlock(blockedId);
     });
 
+    _kickedSub = _socketService.onKicked.listen((data) {
+      _applyRemoval((data['targetUserId'] ?? '') as String, 'kicked');
+    });
+
+    _bannedSub = _socketService.onBanned.listen((data) {
+      _applyRemoval((data['targetUserId'] ?? '') as String, 'banned');
+    });
+
     _commentHistorySub = _socketService.onCommentHistory.listen((items) {
       if (items.isEmpty) return;
 
@@ -627,6 +691,8 @@ class LiveController extends ChangeNotifier {
     _commentPinSub?.cancel();
     _blockedSub?.cancel();
     _commentHistorySub?.cancel();
+    _kickedSub?.cancel();
+    _bannedSub?.cancel();
     _livekitService.removeListener(_onLiveKitUpdate);
     _livekitService.dispose();
     _socketService.dispose();

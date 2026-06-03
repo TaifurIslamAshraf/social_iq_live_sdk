@@ -346,6 +346,14 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                 _controller.reportComment(c);
                 _showSnack('Comment reported');
               },
+              onKick: (c) {
+                _controller.kickUser(c.userId);
+                _showSnack('${c.userName} removed from live');
+              },
+              onBan: (c) {
+                _controller.banUser(c.userId);
+                _showSnack('${c.userName} banned from this live');
+              },
             ),
           ),
 

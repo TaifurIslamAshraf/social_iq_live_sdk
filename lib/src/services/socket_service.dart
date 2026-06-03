@@ -36,6 +36,19 @@ class SocketService extends ChangeNotifier {
   final _commentHistoryController =
       StreamController<List<Map<String, dynamic>>>.broadcast();
 
+  /// Fires when the host kicks a user from the live. Payload:
+  /// `{ targetUserId: String }`. The kicked user leaves; others drop them.
+  final _kickedController = StreamController<Map<String, dynamic>>.broadcast();
+
+  /// Fires when the host bans a user from the live session. Payload:
+  /// `{ targetUserId: String }`.
+  final _bannedController = StreamController<Map<String, dynamic>>.broadcast();
+
+  /// Fires when a banned user's join is rejected by the server. Payload:
+  /// `{ message: String }`.
+  final _banBlockedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
   // Stream controllers for call signaling
   final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
   final _callAcceptedController = StreamController<Map<String, dynamic>>.broadcast();
@@ -58,6 +71,16 @@ class SocketService extends ChangeNotifier {
   /// Emits the room's recent comments once on join (oldest first).
   Stream<List<Map<String, dynamic>>> get onCommentHistory =>
       _commentHistoryController.stream;
+
+  /// Fires when the host kicks a user. Payload: `{ targetUserId: String }`.
+  Stream<Map<String, dynamic>> get onKicked => _kickedController.stream;
+
+  /// Fires when the host bans a user. Payload: `{ targetUserId: String }`.
+  Stream<Map<String, dynamic>> get onBanned => _bannedController.stream;
+
+  /// Fires when a banned user is refused entry. Payload: `{ message: String }`.
+  Stream<Map<String, dynamic>> get onBanBlocked =>
+      _banBlockedController.stream;
 
   Stream<Map<String, dynamic>> get onIncomingCall => _incomingCallController.stream;
   Stream<Map<String, dynamic>> get onCallAccepted => _callAcceptedController.stream;
@@ -134,6 +157,20 @@ class SocketService extends ChangeNotifier {
             .map((e) => Map<String, dynamic>.from(e))
             .toList();
         _commentHistoryController.add(list);
+      }
+    });
+
+    _socket!.on('live_kicked', (data) {
+      if (data is Map) _kickedController.add(Map<String, dynamic>.from(data));
+    });
+
+    _socket!.on('live_banned', (data) {
+      if (data is Map) _bannedController.add(Map<String, dynamic>.from(data));
+    });
+
+    _socket!.on('live_ban_blocked', (data) {
+      if (data is Map) {
+        _banBlockedController.add(Map<String, dynamic>.from(data));
       }
     });
 
@@ -318,6 +355,35 @@ class SocketService extends ChangeNotifier {
     });
   }
 
+  /// Host-only: kick a user from the current live (they may rejoin).
+  void kickLiveUser({
+    required String roomName,
+    required String userId,
+    required String targetUserId,
+  }) {
+    if (!_isConnected || _socket == null) return;
+    _socket!.emit('kick_live_user', {
+      'room': roomName,
+      'userId': userId,
+      'targetUserId': targetUserId,
+    });
+  }
+
+  /// Host-only: ban a user from this live session (cannot rejoin until the
+  /// host ends the broadcast).
+  void banLiveUser({
+    required String roomName,
+    required String userId,
+    required String targetUserId,
+  }) {
+    if (!_isConnected || _socket == null) return;
+    _socket!.emit('ban_live_user', {
+      'room': roomName,
+      'userId': userId,
+      'targetUserId': targetUserId,
+    });
+  }
+
   /// Report a comment to the server for moderation review. Fire-and-forget.
   void reportLiveComment({
     required String roomName,
@@ -394,6 +460,9 @@ class SocketService extends ChangeNotifier {
     _liveRoomsController.close();
     _blockedController.close();
     _commentHistoryController.close();
+    _kickedController.close();
+    _bannedController.close();
+    _banBlockedController.close();
     _incomingCallController.close();
     _callAcceptedController.close();
     _callRejectedController.close();

@@ -23,6 +23,8 @@ class CommentOverlay extends StatefulWidget {
   /// Host moderation actions, shown in the long-press sheet when provided.
   final void Function(LiveComment)? onBlock;
   final void Function(LiveComment)? onReport;
+  final void Function(LiveComment)? onKick;
+  final void Function(LiveComment)? onBan;
 
   /// When non-null, a sticky highlighted row is rendered at the very top of the
   /// comment section (Facebook-live style) and stays put while the rest of the
@@ -39,6 +41,8 @@ class CommentOverlay extends StatefulWidget {
     this.onUnpin,
     this.onBlock,
     this.onReport,
+    this.onKick,
+    this.onBan,
     this.pinnedComment,
   });
 
@@ -189,6 +193,34 @@ class _CommentOverlayState extends State<CommentOverlay> {
                     widget.onBlock!(comment);
                   },
                 ),
+              if (widget.onKick != null)
+                ListTile(
+                  leading: const Icon(Icons.logout, color: SdkTheme.primaryRed),
+                  title: const Text('Kick from live',
+                      style: TextStyle(color: SdkTheme.primaryRed)),
+                  subtitle: Text(
+                    'Remove ${comment.userName} (they can rejoin)',
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onKick!(comment);
+                  },
+                ),
+              if (widget.onBan != null)
+                ListTile(
+                  leading: const Icon(Icons.gavel, color: SdkTheme.primaryRed),
+                  title: const Text('Ban from live',
+                      style: TextStyle(color: SdkTheme.primaryRed)),
+                  subtitle: Text(
+                    "Remove ${comment.userName} — can't rejoin this live",
+                    style: const TextStyle(color: Colors.white38, fontSize: 12),
+                  ),
+                  onTap: () {
+                    Navigator.pop(ctx);
+                    widget.onBan!(comment);
+                  },
+                ),
             ],
           ),
         );
@@ -231,7 +263,9 @@ class _CommentOverlayState extends State<CommentOverlay> {
                           widget.onPin != null ||
                           widget.onUnpin != null ||
                           widget.onBlock != null ||
-                          widget.onReport != null)
+                          widget.onReport != null ||
+                          widget.onKick != null ||
+                          widget.onBan != null)
                   ? () => _showHostActions(context, comment)
                   : null,
             );

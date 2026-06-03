@@ -111,16 +111,38 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
       if (mounted) setState(() => _isConnecting = false);
       widget.onLiveViewStarted?.call();
     } catch (e) {
-      if (mounted) {
-        setState(() => _isConnecting = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to join live: $e'),
-            backgroundColor: SdkTheme.endCallRed,
+      if (!mounted) return;
+      setState(() => _isConnecting = false);
+
+      // A 403 from the token endpoint means the host banned this viewer from the
+      // live — show the server's message prominently instead of a generic error.
+      final isBan = e is ApiException && e.statusCode == 403;
+      final message = e is ApiException ? e.message : 'Failed to join live';
+
+      if (isBan) {
+        await showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: SdkTheme.backgroundDark,
+            title: const Text('Banned', style: TextStyle(color: Colors.white)),
+            content: Text(message,
+                style: const TextStyle(color: Colors.white70)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('OK',
+                    style: TextStyle(color: SdkTheme.primaryRed)),
+              ),
+            ],
           ),
         );
-        Navigator.of(context).pop();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(message),
+              backgroundColor: SdkTheme.endCallRed),
+        );
       }
+      if (mounted) Navigator.of(context).pop();
     }
   }
 
@@ -173,6 +195,40 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   Future<void> _leaveStream() async {
     await _controller.stopBroadcast();
     _navigateAway();
+  }
+
+  // ── Removed/ended overlay copy — depends on why the viewer is leaving ──────
+  IconData get _removedOverlayIcon {
+    switch (_controller.removedReason) {
+      case 'banned':
+        return Icons.gavel;
+      case 'kicked':
+        return Icons.logout;
+      default:
+        return Icons.live_tv;
+    }
+  }
+
+  String get _removedOverlayTitle {
+    switch (_controller.removedReason) {
+      case 'banned':
+        return 'Banned from live';
+      case 'kicked':
+        return 'Removed from live';
+      default:
+        return 'Live has ended';
+    }
+  }
+
+  String get _removedOverlayBody {
+    switch (_controller.removedReason) {
+      case 'banned':
+        return "You've been banned from this live by the host";
+      case 'kicked':
+        return 'The host removed you from this live';
+      default:
+        return 'The host has ended the broadcast';
+    }
   }
 
   @override
@@ -393,9 +449,9 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                   ),
           ),
 
-          // ── Live ended overlay ─────────────────────────────────────────
-          // Shown when the host ends the broadcast so the viewer always
-          // sees feedback instead of a black screen while the pop animates.
+          // ── Live ended / removed overlay ───────────────────────────────
+          // Shown when the host ends the broadcast, or when this viewer is
+          // kicked/banned, so they get feedback instead of a black screen.
           if (_liveEnded)
             Positioned.fill(
               child: Container(
@@ -410,13 +466,13 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                           color: SdkTheme.endCallRed,
                           shape: BoxShape.circle,
                         ),
-                        child: const Icon(Icons.live_tv,
+                        child: Icon(_removedOverlayIcon,
                             color: Colors.white, size: 36),
                       ),
                       const SizedBox(height: 20),
-                      const Text(
-                        'Live has ended',
-                        style: TextStyle(
+                      Text(
+                        _removedOverlayTitle,
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 22,
                           fontWeight: FontWeight.w700,
@@ -424,7 +480,8 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        'The host has ended the broadcast',
+                        _removedOverlayBody,
+                        textAlign: TextAlign.center,
                         style: TextStyle(
                           color: Colors.white.withValues(alpha: 0.6),
                           fontSize: 14,
