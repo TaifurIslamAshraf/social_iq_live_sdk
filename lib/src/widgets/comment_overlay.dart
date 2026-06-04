@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/live_config.dart';
 import '../theme/sdk_theme.dart';
+import 'live_avatar.dart';
 
 /// Scrolling comment overlay for live streams.
 /// Shows comments floating at the bottom of the screen with
@@ -106,24 +107,10 @@ class _CommentOverlayState extends State<CommentOverlay> {
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 child: Row(
                   children: [
-                    CircleAvatar(
+                    LiveAvatar(
                       radius: 16,
-                      backgroundColor:
-                          SdkTheme.primaryPink.withValues(alpha: 0.3),
-                      backgroundImage: comment.userAvatar != null
-                          ? NetworkImage(comment.userAvatar!)
-                          : null,
-                      child: comment.userAvatar == null
-                          ? Text(
-                              comment.userName.isNotEmpty
-                                  ? comment.userName[0].toUpperCase()
-                                  : '?',
-                              style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            )
-                          : null,
+                      imageUrl: comment.userAvatar,
+                      name: comment.userName,
                     ),
                     const SizedBox(width: 10),
                     Expanded(
@@ -428,24 +415,11 @@ class _CommentBubble extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              CircleAvatar(
+              LiveAvatar(
                 radius: 14,
-                backgroundColor: SdkTheme.primaryPink.withValues(alpha: 0.3),
-                backgroundImage: comment.userAvatar != null
-                    ? NetworkImage(comment.userAvatar!)
-                    : null,
-                child: comment.userAvatar == null
-                    ? Text(
-                        comment.userName.isNotEmpty
-                            ? comment.userName[0].toUpperCase()
-                            : '?',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      )
-                    : null,
+                imageUrl: comment.userAvatar,
+                name: comment.userName,
+                fontSize: 12,
               ),
               const SizedBox(width: 8),
               Flexible(

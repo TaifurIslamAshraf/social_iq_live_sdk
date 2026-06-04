@@ -5,6 +5,7 @@ import '../controllers/live_controller.dart';
 import '../services/api_service.dart';
 import '../theme/sdk_theme.dart';
 import 'comment_overlay.dart';
+import 'live_avatar.dart';
 import 'reaction_animation.dart';
 import 'live_broadcast_host.dart' show SocialIqLiveSdkConfig;
 
@@ -290,17 +291,11 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircleAvatar(
+                  LiveAvatar(
                     radius: 40,
-                    backgroundColor:
-                        SdkTheme.primaryPink.withValues(alpha: 0.3),
-                    backgroundImage: widget.hostAvatar != null
-                        ? NetworkImage(widget.hostAvatar!)
-                        : null,
-                    child: widget.hostAvatar == null
-                        ? const Icon(Icons.person,
-                            color: Colors.white, size: 40)
-                        : null,
+                    imageUrl: widget.hostAvatar,
+                    name: widget.hostName ?? 'Host',
+                    fontSize: 32,
                   ),
                   const SizedBox(height: 16),
                   Text(
@@ -613,23 +608,11 @@ class _ViewerHostChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircleAvatar(
+            LiveAvatar(
               radius: 12,
-              backgroundColor: SdkTheme.primaryPink.withValues(alpha: 0.3),
-              backgroundImage:
-                  avatarUrl != null ? NetworkImage(avatarUrl!) : null,
-              child: avatarUrl == null
-                  ? Text(
-                      displayName.isNotEmpty
-                          ? displayName[0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    )
-                  : null,
+              imageUrl: avatarUrl,
+              name: displayName,
+              fontSize: 11,
             ),
             const SizedBox(width: 6),
             Flexible(

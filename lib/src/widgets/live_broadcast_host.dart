@@ -6,6 +6,7 @@ import '../models/live_config.dart';
 import '../services/api_service.dart';
 import '../theme/sdk_theme.dart';
 import 'comment_overlay.dart';
+import 'live_avatar.dart';
 import 'reaction_animation.dart';
 
 /// Full-screen live broadcast host screen.
@@ -227,23 +228,11 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircleAvatar(
+                  LiveAvatar(
                     radius: 50,
-                    backgroundColor:
-                        SdkTheme.primaryPink.withValues(alpha: 0.3),
-                    backgroundImage: widget.avatarUrl != null
-                        ? NetworkImage(widget.avatarUrl!)
-                        : null,
-                    child: widget.avatarUrl == null
-                        ? Text(
-                            widget.displayName[0].toUpperCase(),
-                            style: const TextStyle(
-                              fontSize: 36,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          )
-                        : null,
+                    imageUrl: widget.avatarUrl,
+                    name: widget.displayName,
+                    fontSize: 36,
                   ),
                   const SizedBox(height: 16),
                   Text(
@@ -577,23 +566,11 @@ class _HostChip extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircleAvatar(
+            LiveAvatar(
               radius: 12,
-              backgroundColor: SdkTheme.primaryPink.withValues(alpha: 0.3),
-              backgroundImage:
-                  avatarUrl != null ? NetworkImage(avatarUrl!) : null,
-              child: avatarUrl == null
-                  ? Text(
-                      displayName.isNotEmpty
-                          ? displayName[0].toUpperCase()
-                          : '?',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    )
-                  : null,
+              imageUrl: avatarUrl,
+              name: displayName,
+              fontSize: 11,
             ),
             const SizedBox(width: 6),
             Flexible(
