@@ -7,6 +7,8 @@ import '../theme/sdk_theme.dart';
 import 'comment_overlay.dart';
 import 'live_avatar.dart';
 import 'reaction_animation.dart';
+import 'gift_animation.dart';
+import '../models/live_config.dart';
 import 'live_broadcast_host.dart' show SocialIqLiveSdkConfig;
 
 /// Full-screen live broadcast viewer screen.
@@ -53,6 +55,14 @@ class LiveBroadcastViewer extends StatefulWidget {
   /// Use [VideoQuality.LOW] on very slow connections to save server bandwidth.
   final VideoQuality preferredQuality;
 
+  /// Charge a gift on the backend. Return `true` once the coins were
+  /// successfully deducted — only then is the gift broadcast + animated.
+  /// When null, the gift button is hidden.
+  final Future<bool> Function(GiftType gift)? onSendGift;
+
+  /// Gift catalog shown in the picker. Defaults to [kDefaultGiftCatalog].
+  final List<GiftType> giftCatalog;
+
   const LiveBroadcastViewer({
     super.key,
     required this.userToken,
@@ -66,6 +76,8 @@ class LiveBroadcastViewer extends StatefulWidget {
     this.onLiveViewStarted,
     this.onLiveViewLeave,
     this.preferredQuality = VideoQuality.MEDIUM, // ← reduced default
+    this.onSendGift,
+    this.giftCatalog = kDefaultGiftCatalog,
   });
 
   @override
@@ -75,6 +87,7 @@ class LiveBroadcastViewer extends StatefulWidget {
 class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   late final LiveController _controller;
   bool _showReactionBar = false;
+  bool _sendingGift = false;
   bool _hasNavigatedAway = false;
   bool _liveEnded = false; // true once host ends stream; shows overlay before pop
   bool _isConnecting = true; // true while WebRTC handshake is in progress
@@ -179,6 +192,44 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
       },
     );
     setState(() => _heartBursts.add(heart));
+  }
+
+  void _openGiftPicker() {
+    if (_sendingGift || _controller.isBlocked) return;
+    showGiftPicker(
+      context: context,
+      catalog: widget.giftCatalog,
+      onSelect: _handleSendGift,
+    );
+  }
+
+  Future<void> _handleSendGift(GiftType gift) async {
+    final onSendGift = widget.onSendGift;
+    if (onSendGift == null || _sendingGift) return;
+
+    setState(() => _sendingGift = true);
+    bool charged = false;
+    try {
+      charged = await onSendGift(gift); // backend coin charge
+    } catch (_) {
+      charged = false;
+    }
+    if (!mounted) return;
+    setState(() => _sendingGift = false);
+
+    if (charged) {
+      // Coins deducted — now broadcast + float the gift to everyone.
+      _controller.sendGift(
+        giftKey: gift.key,
+        emoji: gift.emoji,
+        label: gift.label,
+        coin: gift.coin,
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not send gift — check your balance.')),
+      );
+    }
   }
 
   void _onUpdate() {
@@ -384,6 +435,13 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                 reactions: _controller.pendingReactions),
           ),
 
+          // ── Gift animations ────────────────────────────────────────────
+          Positioned(
+            left: 8,
+            bottom: 160 + bottomPad,
+            child: GiftAnimation(gifts: _controller.pendingGifts),
+          ),
+
           // ── Comments overlay ───────────────────────────────────────────
           Positioned(
             left: 0,
@@ -427,6 +485,29 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                               onSubmit: _controller.sendComment,
                             ),
                           ),
+                          if (widget.onSendGift != null) ...[
+                            const SizedBox(width: 10),
+                            GestureDetector(
+                              onTap: _openGiftPicker,
+                              child: Container(
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                  color: Colors.amber.withValues(alpha: 0.95),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: _sendingGift
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: Colors.white),
+                                      )
+                                    : const Icon(Icons.card_giftcard,
+                                        color: Colors.white, size: 22),
+                              ),
+                            ),
+                          ],
                           const SizedBox(width: 10),
                           GestureDetector(
                             onTap: () => setState(

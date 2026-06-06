@@ -95,3 +95,52 @@ class LiveReaction {
     required this.timestamp,
   });
 }
+
+/// A gift the viewer can send (catalog item). `coin` is the gross cost charged
+/// to the sender's wallet — must match the backend gift catalog by [key].
+class GiftType {
+  /// Stable key sent to the backend (e.g. `rose`, `diamond`).
+  final String key;
+  final String emoji;
+  final String label;
+  final int coin;
+
+  const GiftType({
+    required this.key,
+    required this.emoji,
+    required this.label,
+    required this.coin,
+  });
+}
+
+/// Default gift catalog — mirrors the backend `utils/gift.catalog.js`.
+/// Override via `LiveBroadcastViewer(giftCatalog: ...)` if the server changes.
+const List<GiftType> kDefaultGiftCatalog = [
+  GiftType(key: 'rose', emoji: '🌹', label: 'Rose', coin: 100),
+  GiftType(key: 'trophy', emoji: '🏆', label: 'Trophy', coin: 200),
+  GiftType(key: 'crown', emoji: '👑', label: 'Crown', coin: 300),
+  GiftType(key: 'rocket', emoji: '🚀', label: 'Rocket', coin: 400),
+  GiftType(key: 'star', emoji: '⭐', label: 'Star', coin: 500),
+  GiftType(key: 'diamond', emoji: '💎', label: 'Diamond', coin: 1000),
+];
+
+/// A gift shown floating in the live stream (sent locally or received over socket).
+class LiveGift {
+  final String giftKey;
+  final String emoji;
+  final String label;
+  final int coin;
+  final String userId;
+  final String? userName;
+  final DateTime timestamp;
+
+  const LiveGift({
+    required this.giftKey,
+    required this.emoji,
+    required this.label,
+    required this.coin,
+    required this.userId,
+    this.userName,
+    required this.timestamp,
+  });
+}

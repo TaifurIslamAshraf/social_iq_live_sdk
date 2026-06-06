@@ -12,6 +12,7 @@ class SocketService extends ChangeNotifier {
   // Stream controllers for live events
   final _commentController = StreamController<Map<String, dynamic>>.broadcast();
   final _reactionController = StreamController<Map<String, dynamic>>.broadcast();
+  final _giftController = StreamController<Map<String, dynamic>>.broadcast();
   final _viewerCountController = StreamController<int>.broadcast();
   final _connectController = StreamController<void>.broadcast(); // fires on (re)connect
 
@@ -65,6 +66,10 @@ class SocketService extends ChangeNotifier {
 
   Stream<Map<String, dynamic>> get onComment => _commentController.stream;
   Stream<Map<String, dynamic>> get onReaction => _reactionController.stream;
+
+  /// Fires when someone sends a gift in the room. Payload:
+  /// `{ room, userId, userName, giftKey, emoji, label, coin }`.
+  Stream<Map<String, dynamic>> get onGift => _giftController.stream;
   Stream<int> get onViewerCountUpdate => _viewerCountController.stream;
   Stream<void> get onConnect => _connectController.stream;  // fires on every connect/reconnect
   Stream<Map<String, dynamic>> get onCommentPin => _commentPinController.stream;
@@ -152,6 +157,10 @@ class SocketService extends ChangeNotifier {
 
     _socket!.on('live_reaction', (data) {
       if (data is Map) _reactionController.add(Map<String, dynamic>.from(data));
+    });
+
+    _socket!.on('live_gift', (data) {
+      if (data is Map) _giftController.add(Map<String, dynamic>.from(data));
     });
 
     _socket!.on('comment_pinned', (data) {
@@ -364,6 +373,32 @@ class SocketService extends ChangeNotifier {
     });
   }
 
+  /// Broadcast a gift to the live stream (visual only — the coin transfer is
+  /// done via the HTTP POST /send_gift before calling this).
+  void sendGift({
+    required String roomName,
+    required String userId,
+    String? userName,
+    required String giftKey,
+    required String emoji,
+    required String label,
+    required int coin,
+  }) {
+    if (!_isConnected || _socket == null) {
+      debugPrint('[SocketService] Cannot send gift: not connected');
+      return;
+    }
+    _socket!.emit('live_gift', {
+      'room': roomName,
+      'userId': userId,
+      'userName': userName,
+      'giftKey': giftKey,
+      'emoji': emoji,
+      'label': label,
+      'coin': coin,
+    });
+  }
+
   /// Host-only: block a user from the live room. The server authorises (only the
   /// room host may block), drops the blocked user's future comments/reactions,
   /// and notifies the room via `live_blocked`.
@@ -510,6 +545,7 @@ class SocketService extends ChangeNotifier {
     disconnect();
     _commentController.close();
     _reactionController.close();
+    _giftController.close();
     _viewerCountController.close();
     _connectController.close();
     _commentPinController.close();

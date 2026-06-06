@@ -8,6 +8,7 @@ import '../theme/sdk_theme.dart';
 import 'comment_overlay.dart';
 import 'live_avatar.dart';
 import 'reaction_animation.dart';
+import 'gift_animation.dart';
 
 /// Full-screen live broadcast host screen.
 ///
@@ -313,6 +314,13 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
             bottom: 200 + bottomPad + keyboard,
             child: ReactionAnimation(
                 reactions: _controller.pendingReactions),
+          ),
+
+          // ── Gift animations ────────────────────────────────────────────
+          Positioned(
+            left: 8,
+            bottom: 200 + bottomPad + keyboard,
+            child: GiftAnimation(gifts: _controller.pendingGifts),
           ),
 
           // ── Comments overlay ───────────────────────────────────────────

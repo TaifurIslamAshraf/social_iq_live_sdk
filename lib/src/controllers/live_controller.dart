@@ -33,6 +33,7 @@ class LiveController extends ChangeNotifier {
 
   final List<LiveComment> _comments = [];
   final List<LiveReaction> _pendingReactions = [];
+  final List<LiveGift> _pendingGifts = [];
   LiveComment? _pinnedComment;
   int _viewerCount = 0;
   bool _isLive = false;
@@ -64,6 +65,7 @@ class LiveController extends ChangeNotifier {
   StreamSubscription? _connectSub;
   StreamSubscription? _commentSub;
   StreamSubscription? _reactionSub;
+  StreamSubscription? _giftSub;
   StreamSubscription? _viewerCountSub;
   StreamSubscription? _commentPinSub;
   StreamSubscription? _blockedSub;
@@ -79,6 +81,7 @@ class LiveController extends ChangeNotifier {
   List<LiveComment> get comments => List.unmodifiable(_comments);
   List<LiveReaction> get pendingReactions =>
       List.unmodifiable(_pendingReactions);
+  List<LiveGift> get pendingGifts => List.unmodifiable(_pendingGifts);
   LiveComment? get pinnedComment => _pinnedComment;
   int get viewerCount => _viewerCount;
   bool get isLive => _isLive;
@@ -493,6 +496,48 @@ class LiveController extends ChangeNotifier {
     _scheduleNotify();
   }
 
+  /// Broadcast a gift to the room and float it locally. Call this only *after*
+  /// the coin charge (HTTP POST /send_gift) has succeeded — this is the visual
+  /// + realtime broadcast, not the payment.
+  void sendGift({
+    required String giftKey,
+    required String emoji,
+    required String label,
+    required int coin,
+  }) {
+    if (_roomName == null || _identity == null) return;
+
+    final gift = LiveGift(
+      giftKey: giftKey,
+      emoji: emoji,
+      label: label,
+      coin: coin,
+      userId: _identity!,
+      userName: _displayName ?? _identity!,
+      timestamp: DateTime.now(),
+    );
+
+    _pendingGifts.add(gift);
+
+    _socketService.sendGift(
+      roomName: _roomName!,
+      userId: _identity!,
+      userName: _displayName ?? _identity!,
+      giftKey: giftKey,
+      emoji: emoji,
+      label: label,
+      coin: coin,
+    );
+
+    notifyListeners(); // immediate — user action
+
+    Future.delayed(const Duration(seconds: 4), () {
+      _pendingGifts.remove(gift);
+      if (!_isLive) return;
+      _scheduleNotify();
+    });
+  }
+
   // ── Controls ──────────────────────────────────────────────────────────────
 
   /// Toggle mute.
@@ -667,6 +712,32 @@ class LiveController extends ChangeNotifier {
       });
     });
 
+    _giftSub = _socketService.onGift.listen((data) {
+      if (data['userId'] == _identity) return; // our own gift is already floating
+      if (_blockedUserIds.contains(data['userId'])) return;
+
+      final gift = LiveGift(
+        giftKey: data['giftKey'] ?? '',
+        emoji: data['emoji'] ?? '🎁',
+        label: data['label'] ?? 'Gift',
+        coin: (data['coin'] is int)
+            ? data['coin'] as int
+            : int.tryParse('${data['coin']}') ?? 0,
+        userId: data['userId'] ?? '',
+        userName: data['userName'],
+        timestamp: DateTime.now(),
+      );
+
+      _pendingGifts.add(gift);
+      _scheduleNotify();
+
+      Future.delayed(const Duration(seconds: 4), () {
+        _pendingGifts.remove(gift);
+        if (!_isLive) return;
+        _scheduleNotify();
+      });
+    });
+
     _viewerCountSub = _socketService.onViewerCountUpdate.listen((count) {
       _viewerCount = count;
       _scheduleNotify();
@@ -749,6 +820,7 @@ class LiveController extends ChangeNotifier {
     _connectSub?.cancel();
     _commentSub?.cancel();
     _reactionSub?.cancel();
+    _giftSub?.cancel();
     _viewerCountSub?.cancel();
     _commentPinSub?.cancel();
     _blockedSub?.cancel();

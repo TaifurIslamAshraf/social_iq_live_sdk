@@ -34,6 +34,7 @@ export 'src/widgets/group_call_screen.dart';
 export 'src/widgets/incoming_call_screen.dart';
 export 'src/widgets/comment_overlay.dart';
 export 'src/widgets/reaction_animation.dart';
+export 'src/widgets/gift_animation.dart';
 
 // Theme
 export 'src/theme/sdk_theme.dart';
