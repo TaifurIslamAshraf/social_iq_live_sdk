@@ -294,6 +294,24 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                     ],
                   ),
                 ),
+                if (_controller.sessionGiftCoins > 0) ...[
+                  const SizedBox(width: 8),
+                  // Gift coins received this session (gross value)
+                  _GlassPill(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.monetization_on,
+                            color: Colors.amber, size: 14),
+                        const SizedBox(width: 4),
+                        Text(
+                          _formatCount(_controller.sessionGiftCoins),
+                          style: SdkTheme.labelBold,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const Spacer(),
                 // Close button
                 _CircleIconButton(

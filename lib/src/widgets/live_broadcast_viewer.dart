@@ -418,6 +418,23 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                     ],
                   ),
                 ),
+                if (_controller.sessionGiftCoins > 0) ...[
+                  const SizedBox(width: 8),
+                  _ViewerGlassPill(
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.monetization_on,
+                            color: Colors.amber, size: 14),
+                        const SizedBox(width: 4),
+                        Text(
+                          _formatViewerCount(_controller.sessionGiftCoins),
+                          style: SdkTheme.labelBold,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
                 const Spacer(),
                 _ViewerCircleIconButton(
                   icon: Icons.close,

@@ -34,6 +34,10 @@ class LiveController extends ChangeNotifier {
   final List<LiveComment> _comments = [];
   final List<LiveReaction> _pendingReactions = [];
   final List<LiveGift> _pendingGifts = [];
+
+  /// Running total of gift coins (gross value) sent in the current session.
+  /// In-memory only — resets when a new broadcast starts/joins.
+  int _sessionGiftCoins = 0;
   LiveComment? _pinnedComment;
   int _viewerCount = 0;
   bool _isLive = false;
@@ -82,6 +86,9 @@ class LiveController extends ChangeNotifier {
   List<LiveReaction> get pendingReactions =>
       List.unmodifiable(_pendingReactions);
   List<LiveGift> get pendingGifts => List.unmodifiable(_pendingGifts);
+
+  /// Total gift coins (gross) sent so far in this live session.
+  int get sessionGiftCoins => _sessionGiftCoins;
   LiveComment? get pinnedComment => _pinnedComment;
   int get viewerCount => _viewerCount;
   bool get isLive => _isLive;
@@ -141,6 +148,7 @@ class LiveController extends ChangeNotifier {
     _displayName = displayName;
     _avatarUrl = avatarUrl;
     _roomName = 'live_$identity';
+    _sessionGiftCoins = 0;
 
     _apiService.setAuthToken(userToken);
 
@@ -195,6 +203,7 @@ class LiveController extends ChangeNotifier {
     _displayName = displayName;
     _avatarUrl = avatarUrl;
     _roomName = roomName;
+    _sessionGiftCoins = 0;
 
     _preferredQuality = preferredQuality;
     _apiService.setAuthToken(userToken);
@@ -518,6 +527,7 @@ class LiveController extends ChangeNotifier {
     );
 
     _pendingGifts.add(gift);
+    _sessionGiftCoins += coin; // our own gift counts toward the session total
 
     _socketService.sendGift(
       roomName: _roomName!,
@@ -729,6 +739,7 @@ class LiveController extends ChangeNotifier {
       );
 
       _pendingGifts.add(gift);
+      _sessionGiftCoins += gift.coin; // received gift adds to the session total
       _scheduleNotify();
 
       Future.delayed(const Duration(seconds: 4), () {

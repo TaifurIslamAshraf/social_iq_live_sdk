@@ -279,7 +279,8 @@ class _CommentOverlayState extends State<CommentOverlay> {
             final comment = listComments[index];
             return _CommentBubble(
               comment: comment,
-              onLongPress: widget.isHost &&
+              // Host-only ⋮ menu (replaces long-press) when any action exists.
+              onMenu: widget.isHost &&
                       (widget.onReply != null ||
                           widget.onPin != null ||
                           widget.onUnpin != null ||
@@ -385,19 +386,19 @@ class _PinnedCommentTile extends StatelessWidget {
 
 class _CommentBubble extends StatelessWidget {
   final LiveComment comment;
-  final VoidCallback? onLongPress;
 
-  const _CommentBubble({required this.comment, this.onLongPress});
+  /// Host-only: when provided, a ⋮ button is shown that opens the moderation
+  /// menu (replaces the old long-press affordance). Null for viewers.
+  final VoidCallback? onMenu;
+
+  const _CommentBubble({required this.comment, this.onMenu});
 
   @override
   Widget build(BuildContext context) {
     final pinned = comment.isPinned;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onLongPress: onLongPress,
-        child: Container(
+      child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
             // Pinned bubbles get a faint pink tint so the host can spot them.
@@ -467,10 +468,21 @@ class _CommentBubble extends StatelessWidget {
                   ],
                 ),
               ),
+              if (onMenu != null) ...[
+                const SizedBox(width: 4),
+                GestureDetector(
+                  onTap: onMenu,
+                  behavior: HitTestBehavior.opaque,
+                  child: const Padding(
+                    padding: EdgeInsets.only(left: 2, top: 1),
+                    child: Icon(Icons.more_vert,
+                        size: 18, color: Colors.white70),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
-      ),
     );
   }
 }
