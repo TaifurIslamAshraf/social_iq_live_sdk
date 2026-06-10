@@ -55,10 +55,11 @@ class LiveBroadcastViewer extends StatefulWidget {
   /// Use [VideoQuality.LOW] on very slow connections to save server bandwidth.
   final VideoQuality preferredQuality;
 
-  /// Charge a gift on the backend. Return `true` once the coins were
-  /// successfully deducted — only then is the gift broadcast + animated.
-  /// When null, the gift button is hidden.
-  final Future<bool> Function(GiftType gift)? onSendGift;
+  /// Charge a gift on the backend. Return the **health points** the sender
+  /// gained (>= 0) once the coins were successfully deducted — only then is the
+  /// gift broadcast + animated. Return `null` on failure. When this callback
+  /// itself is null, the gift button is hidden.
+  final Future<int?> Function(GiftType gift)? onSendGift;
 
   /// Gift catalog shown in the picker. Defaults to [kDefaultGiftCatalog].
   final List<GiftType> giftCatalog;
@@ -208,22 +209,23 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
     if (onSendGift == null || _sendingGift) return;
 
     setState(() => _sendingGift = true);
-    bool charged = false;
+    int? healthGained; // null = failed; >= 0 = success + health earned
     try {
-      charged = await onSendGift(gift); // backend coin charge
+      healthGained = await onSendGift(gift); // backend coin charge + health boost
     } catch (_) {
-      charged = false;
+      healthGained = null;
     }
     if (!mounted) return;
     setState(() => _sendingGift = false);
 
-    if (charged) {
-      // Coins deducted — now broadcast + float the gift to everyone.
+    if (healthGained != null) {
+      // Coins deducted — now broadcast + float the gift (with health) to everyone.
       _controller.sendGift(
         giftKey: gift.key,
         emoji: gift.emoji,
         label: gift.label,
         coin: gift.coin,
+        healthGained: healthGained,
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(

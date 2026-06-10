@@ -383,6 +383,7 @@ class SocketService extends ChangeNotifier {
     required String emoji,
     required String label,
     required int coin,
+    int healthGained = 0,
   }) {
     if (!_isConnected || _socket == null) {
       debugPrint('[SocketService] Cannot send gift: not connected');
@@ -396,6 +397,7 @@ class SocketService extends ChangeNotifier {
       'emoji': emoji,
       'label': label,
       'coin': coin,
+      'healthGained': healthGained,
     });
   }
 

@@ -112,6 +112,30 @@ class _FloatingGiftState extends State<_FloatingGift>
                   fontWeight: FontWeight.w600),
             ),
           ),
+          if (g.healthGained > 0) ...[
+            const SizedBox(height: 3),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: const Color(0xFF22C55E).withValues(alpha: 0.9),
+                borderRadius: BorderRadius.circular(SdkTheme.radiusXL),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.favorite, color: Colors.white, size: 11),
+                  const SizedBox(width: 3),
+                  Text(
+                    '+${g.healthGained} health',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );

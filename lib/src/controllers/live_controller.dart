@@ -513,6 +513,7 @@ class LiveController extends ChangeNotifier {
     required String emoji,
     required String label,
     required int coin,
+    int healthGained = 0,
   }) {
     if (_roomName == null || _identity == null) return;
 
@@ -523,6 +524,7 @@ class LiveController extends ChangeNotifier {
       coin: coin,
       userId: _identity!,
       userName: _displayName ?? _identity!,
+      healthGained: healthGained,
       timestamp: DateTime.now(),
     );
 
@@ -537,6 +539,7 @@ class LiveController extends ChangeNotifier {
       emoji: emoji,
       label: label,
       coin: coin,
+      healthGained: healthGained,
     );
 
     notifyListeners(); // immediate — user action
@@ -735,6 +738,9 @@ class LiveController extends ChangeNotifier {
             : int.tryParse('${data['coin']}') ?? 0,
         userId: data['userId'] ?? '',
         userName: data['userName'],
+        healthGained: (data['healthGained'] is int)
+            ? data['healthGained'] as int
+            : int.tryParse('${data['healthGained']}') ?? 0,
         timestamp: DateTime.now(),
       );
 

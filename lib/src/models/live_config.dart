@@ -132,6 +132,9 @@ class LiveGift {
   final int coin;
   final String userId;
   final String? userName;
+
+  /// Health points the sender gained from this gift (shown to everyone). 0 = none.
+  final int healthGained;
   final DateTime timestamp;
 
   const LiveGift({
@@ -141,6 +144,7 @@ class LiveGift {
     required this.coin,
     required this.userId,
     this.userName,
+    this.healthGained = 0,
     required this.timestamp,
   });
 }
