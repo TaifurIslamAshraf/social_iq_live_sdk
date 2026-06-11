@@ -35,6 +35,14 @@ class LiveController extends ChangeNotifier {
   final List<LiveReaction> _pendingReactions = [];
   final List<LiveGift> _pendingGifts = [];
 
+  // ── Follow status (only ever resolved for users who comment) ────────────────
+  /// Set by the screen. Returns which of the given uids the current user
+  /// already follows. Null when the app doesn't support follow.
+  Future<Set<String>> Function(List<String> uids)? followingChecker;
+  final Set<String> _followedUserIds = {}; // known already-followed
+  final Set<String> _checkedFollowIds = {}; // resolved (avoid re-checking)
+  bool _resolvingFollow = false;
+
   /// Running total of gift coins (gross value) sent in the current session.
   /// In-memory only — resets when a new broadcast starts/joins.
   int _sessionGiftCoins = 0;
@@ -416,6 +424,60 @@ class LiveController extends ChangeNotifier {
     if (_pinnedComment?.id == commentId) _applyPin(null);
   }
 
+  // ── Follow ────────────────────────────────────────────────────────────────
+
+  /// Uids whose comments should show a Follow pill: resolved as "not followed".
+  Set<String> get followableUserIds =>
+      _checkedFollowIds.difference(_followedUserIds);
+
+  /// Record the outcome of a follow tap so the pill hides once followed.
+  void markFollowed(String userId, bool followed) {
+    if (userId.isEmpty) return;
+    if (followed) {
+      _followedUserIds.add(userId);
+    } else {
+      _followedUserIds.remove(userId);
+    }
+    notifyListeners();
+  }
+
+  /// Resolve follow status for any new commenters (excludes self and anyone
+  /// already checked), batched into a single backend call. Called whenever
+  /// comments change. Only ever inspects users who actually comment — never the
+  /// full following list — so it scales regardless of how many you follow.
+  Future<void> _resolveFollowChecks() async {
+    final checker = followingChecker;
+    if (checker == null || _resolvingFollow) return;
+
+    final pending = <String>{};
+    for (final c in _comments) {
+      final uid = c.userId;
+      if (uid.isEmpty || uid == _identity) continue;
+      if (_checkedFollowIds.contains(uid)) continue;
+      pending.add(uid);
+    }
+    if (pending.isEmpty) return;
+
+    // Optimistically mark checked so concurrent/new comments don't re-request.
+    _checkedFollowIds.addAll(pending);
+    _resolvingFollow = true;
+    try {
+      final followed = await checker(pending.toList());
+      _followedUserIds.addAll(followed);
+      notifyListeners();
+    } catch (_) {
+      _checkedFollowIds.removeAll(pending); // allow a later retry
+    } finally {
+      _resolvingFollow = false;
+      // Pick up anyone who commented while we were resolving.
+      final more = _comments.any((c) =>
+          c.userId.isNotEmpty &&
+          c.userId != _identity &&
+          !_checkedFollowIds.contains(c.userId));
+      if (more) _resolveFollowChecks();
+    }
+  }
+
   /// Report a comment for moderation review. Fire-and-forget; available to any
   /// participant.
   void reportComment(LiveComment comment) {
@@ -680,6 +742,7 @@ class LiveController extends ChangeNotifier {
       ));
       if (_comments.length > _maxComments) _comments.removeAt(0);
       notifyListeners(); // user-visible — keep immediate
+      _resolveFollowChecks(); // resolve Follow-pill status for this commenter
     });
 
     _commentPinSub = _socketService.onCommentPin.listen((data) {
@@ -827,6 +890,7 @@ class LiveController extends ChangeNotifier {
         _comments.removeRange(0, _comments.length - _maxComments);
       }
       notifyListeners();
+      _resolveFollowChecks(); // batch-resolve Follow status for history authors
     });
   }
 

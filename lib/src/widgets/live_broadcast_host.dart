@@ -48,6 +48,11 @@ class LiveBroadcastHost extends StatefulWidget {
   /// on other users' comments.
   final Future<bool> Function(String userId)? onFollowUser;
 
+  /// Given the uids of users who comment, returns which of them the current
+  /// user already follows. Used to hide the Follow pill for them — only ever
+  /// checks commenters, so it scales no matter how many you follow.
+  final Future<Set<String>> Function(List<String> uids)? onCheckFollowing;
+
   const LiveBroadcastHost({
     super.key,
     required this.userToken,
@@ -58,6 +63,7 @@ class LiveBroadcastHost extends StatefulWidget {
     this.onLiveEnded,
     this.onLiveStarted,
     this.onFollowUser,
+    this.onCheckFollowing,
   });
 
   @override
@@ -70,21 +76,12 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
   bool _isConnecting = true; // true while WebRTC handshake is in progress
   LiveComment? _replyingTo;
 
-  /// Users followed during this session — their Follow pill is hidden.
-  final Set<String> _followedUserIds = {};
-
   Future<void> _handleFollow(LiveComment comment) async {
     final cb = widget.onFollowUser;
     if (cb == null) return;
     final nowFollowing = await cb(comment.userId);
     if (!mounted) return;
-    setState(() {
-      if (nowFollowing) {
-        _followedUserIds.add(comment.userId);
-      } else {
-        _followedUserIds.remove(comment.userId);
-      }
-    });
+    _controller.markFollowed(comment.userId, nowFollowing);
     _showSnack(nowFollowing
         ? 'Following ${comment.userName}'
         : 'Unfollowed ${comment.userName}');
@@ -100,6 +97,7 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
     _controller = LiveController(
       apiService: ApiService(baseUrl: SocialIqLiveSdkConfig.apiBaseUrl),
     );
+    _controller.followingChecker = widget.onCheckFollowing;
     _controller.addListener(_onUpdate);
     _startBroadcast();
   }
@@ -377,7 +375,7 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
               isHost: true,
               pinnedComment: _controller.pinnedComment,
               currentUserId: widget.identity,
-              followedUserIds: _followedUserIds,
+              followableUserIds: _controller.followableUserIds,
               onFollow: widget.onFollowUser != null ? _handleFollow : null,
               onReply: (c) => setState(() => _replyingTo = c),
               onPin: _controller.pinComment,
@@ -423,6 +421,8 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                   onCancelReply: () => setState(() => _replyingTo = null),
                 ),
                 const SizedBox(height: 10),
+                // Live ends via the top-right close (✕) button, so no separate
+                // END button here.
                 Row(
                   children: [
                     _ControlButton(
@@ -435,8 +435,6 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
                       isActive: _controller.isMuted,
                       onTap: _controller.toggleMute,
                     ),
-                    const Spacer(),
-                    _EndLiveButton(onTap: _confirmEnd),
                   ],
                 ),
               ],
@@ -729,44 +727,6 @@ class _CircleIconButton extends StatelessWidget {
           ),
         ),
         child: Icon(icon, color: Colors.white, size: 20),
-      ),
-    );
-  }
-}
-
-class _EndLiveButton extends StatelessWidget {
-  final VoidCallback onTap;
-  const _EndLiveButton({required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 12),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [SdkTheme.primaryRed, SdkTheme.endCallRed],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-          borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
-          boxShadow: [
-            BoxShadow(
-              color: SdkTheme.primaryRed.withValues(alpha: 0.45),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: const Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.stop_rounded, color: Colors.white, size: 18),
-            SizedBox(width: 6),
-            Text('END', style: SdkTheme.labelBold),
-          ],
-        ),
       ),
     );
   }

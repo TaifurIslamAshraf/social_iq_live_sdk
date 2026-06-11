@@ -39,9 +39,10 @@ class CommentOverlay extends StatefulWidget {
   /// their own comments.
   final String? currentUserId;
 
-  /// Users the current user already follows — their comments hide the Follow
-  /// button. Available to host and viewers alike.
-  final Set<String>? followedUserIds;
+  /// Uids whose comments should show a Follow pill (resolved as "not yet
+  /// followed"). The pill is hidden until a uid is confirmed not-followed, so it
+  /// can never accidentally trigger an unfollow.
+  final Set<String>? followableUserIds;
 
   /// Tap handler for the Follow button on a comment. When provided (and
   /// [currentUserId] is set), a compact Follow pill appears on other users'
@@ -64,7 +65,7 @@ class CommentOverlay extends StatefulWidget {
     this.onDelete,
     this.pinnedComment,
     this.currentUserId,
-    this.followedUserIds,
+    this.followableUserIds,
     this.onFollow,
   });
 
@@ -295,13 +296,14 @@ class _CommentOverlayState extends State<CommentOverlay> {
           itemBuilder: (context, index) {
             final comment = listComments[index];
 
-            // Show a Follow pill on other users' comments that aren't already
-            // followed (available to host and viewers).
+            // Show a Follow pill only on comments from users resolved as
+            // "not followed" (host and viewers alike). Hidden until resolved, so
+            // it can never accidentally trigger an unfollow.
             final canFollow = widget.onFollow != null &&
                 widget.currentUserId != null &&
                 comment.userId.isNotEmpty &&
                 comment.userId != widget.currentUserId &&
-                !(widget.followedUserIds?.contains(comment.userId) ?? false);
+                (widget.followableUserIds?.contains(comment.userId) ?? false);
 
             return _CommentBubble(
               comment: comment,

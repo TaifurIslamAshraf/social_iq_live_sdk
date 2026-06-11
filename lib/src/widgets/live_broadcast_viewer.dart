@@ -69,6 +69,11 @@ class LiveBroadcastViewer extends StatefulWidget {
   /// a Follow pill appears on other users' comments.
   final Future<bool> Function(String userId)? onFollowUser;
 
+  /// Given the uids of users who comment, returns which of them the current
+  /// user already follows. Used to hide the Follow pill for them — only ever
+  /// checks commenters, so it scales no matter how many you follow.
+  final Future<Set<String>> Function(List<String> uids)? onCheckFollowing;
+
   const LiveBroadcastViewer({
     super.key,
     required this.userToken,
@@ -85,6 +90,7 @@ class LiveBroadcastViewer extends StatefulWidget {
     this.onSendGift,
     this.giftCatalog = kDefaultGiftCatalog,
     this.onFollowUser,
+    this.onCheckFollowing,
   });
 
   @override
@@ -99,21 +105,12 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   bool _liveEnded = false; // true once host ends stream; shows overlay before pop
   bool _isConnecting = true; // true while WebRTC handshake is in progress
 
-  /// Users followed during this session — their Follow pill is hidden.
-  final Set<String> _followedUserIds = {};
-
   Future<void> _handleFollow(LiveComment comment) async {
     final cb = widget.onFollowUser;
     if (cb == null) return;
     final nowFollowing = await cb(comment.userId);
     if (!mounted) return;
-    setState(() {
-      if (nowFollowing) {
-        _followedUserIds.add(comment.userId);
-      } else {
-        _followedUserIds.remove(comment.userId);
-      }
-    });
+    _controller.markFollowed(comment.userId, nowFollowing);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(nowFollowing
@@ -139,6 +136,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
     _controller = LiveController(
       apiService: ApiService(baseUrl: SocialIqLiveSdkConfig.apiBaseUrl),
     );
+    _controller.followingChecker = widget.onCheckFollowing;
     _controller.addListener(_onUpdate);
     _joinStream();
   }
@@ -283,6 +281,40 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
     _navigateAway();
   }
 
+  /// Confirm before a viewer leaves a live they're watching (mirrors the host's
+  /// "End Live?" prompt). Only used for user-initiated exit — when the host ends
+  /// the stream or the viewer is kicked/banned, they leave automatically.
+  Future<void> _confirmLeave() async {
+    if (_hasNavigatedAway || _liveEnded) return;
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: SdkTheme.backgroundDark,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(SdkTheme.radiusMedium),
+        ),
+        title: const Text('Leave live?', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Are you sure you want to leave this live?',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child:
+                const Text('Cancel', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Leave',
+                style: TextStyle(color: SdkTheme.primaryRed)),
+          ),
+        ],
+      ),
+    );
+    if (result == true) _leaveStream();
+  }
+
   // ── Removed/ended overlay copy — depends on why the viewer is leaving ──────
   IconData get _removedOverlayIcon {
     switch (_controller.removedReason) {
@@ -335,7 +367,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        _leaveStream();
+        _confirmLeave();
       },
       child: Scaffold(
       backgroundColor: Colors.black,
@@ -472,7 +504,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                 const Spacer(),
                 _ViewerCircleIconButton(
                   icon: Icons.close,
-                  onTap: _leaveStream,
+                  onTap: _confirmLeave,
                 ),
               ],
             ),
@@ -502,7 +534,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
               comments: _controller.comments,
               pinnedComment: _controller.pinnedComment,
               currentUserId: widget.identity,
-              followedUserIds: _followedUserIds,
+              followableUserIds: _controller.followableUserIds,
               onFollow: widget.onFollowUser != null ? _handleFollow : null,
             ),
           ),
