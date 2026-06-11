@@ -64,6 +64,11 @@ class LiveBroadcastViewer extends StatefulWidget {
   /// Gift catalog shown in the picker. Defaults to [kDefaultGiftCatalog].
   final List<GiftType> giftCatalog;
 
+  /// Follow a commenter (host or another viewer). The app performs the follow
+  /// and returns true if the current user now follows [userId]. When provided,
+  /// a Follow pill appears on other users' comments.
+  final Future<bool> Function(String userId)? onFollowUser;
+
   const LiveBroadcastViewer({
     super.key,
     required this.userToken,
@@ -79,6 +84,7 @@ class LiveBroadcastViewer extends StatefulWidget {
     this.preferredQuality = VideoQuality.MEDIUM, // ← reduced default
     this.onSendGift,
     this.giftCatalog = kDefaultGiftCatalog,
+    this.onFollowUser,
   });
 
   @override
@@ -92,6 +98,32 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   bool _hasNavigatedAway = false;
   bool _liveEnded = false; // true once host ends stream; shows overlay before pop
   bool _isConnecting = true; // true while WebRTC handshake is in progress
+
+  /// Users followed during this session — their Follow pill is hidden.
+  final Set<String> _followedUserIds = {};
+
+  Future<void> _handleFollow(LiveComment comment) async {
+    final cb = widget.onFollowUser;
+    if (cb == null) return;
+    final nowFollowing = await cb(comment.userId);
+    if (!mounted) return;
+    setState(() {
+      if (nowFollowing) {
+        _followedUserIds.add(comment.userId);
+      } else {
+        _followedUserIds.remove(comment.userId);
+      }
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(nowFollowing
+            ? 'Following ${comment.userName}'
+            : 'Unfollowed ${comment.userName}'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   // Double-tap-to-react: position of the last tap and the live heart pops.
   Offset? _lastTapPos;
@@ -469,6 +501,9 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
             child: CommentOverlay(
               comments: _controller.comments,
               pinnedComment: _controller.pinnedComment,
+              currentUserId: widget.identity,
+              followedUserIds: _followedUserIds,
+              onFollow: widget.onFollowUser != null ? _handleFollow : null,
             ),
           ),
 

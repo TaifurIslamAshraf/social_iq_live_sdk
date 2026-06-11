@@ -34,6 +34,20 @@ class CommentOverlay extends StatefulWidget {
   /// list scrolls. The unpin affordance on it is host-only (gated on [isHost]).
   final LiveComment? pinnedComment;
 
+  // ── Follow ────────────────────────────────────────────────────────────────
+  /// The current viewer/host's own user id — used to hide the Follow button on
+  /// their own comments.
+  final String? currentUserId;
+
+  /// Users the current user already follows — their comments hide the Follow
+  /// button. Available to host and viewers alike.
+  final Set<String>? followedUserIds;
+
+  /// Tap handler for the Follow button on a comment. When provided (and
+  /// [currentUserId] is set), a compact Follow pill appears on other users'
+  /// comments.
+  final void Function(LiveComment)? onFollow;
+
   const CommentOverlay({
     super.key,
     required this.comments,
@@ -49,6 +63,9 @@ class CommentOverlay extends StatefulWidget {
     this.onMute,
     this.onDelete,
     this.pinnedComment,
+    this.currentUserId,
+    this.followedUserIds,
+    this.onFollow,
   });
 
   @override
@@ -277,8 +294,19 @@ class _CommentOverlayState extends State<CommentOverlay> {
           itemCount: listComments.length,
           itemBuilder: (context, index) {
             final comment = listComments[index];
+
+            // Show a Follow pill on other users' comments that aren't already
+            // followed (available to host and viewers).
+            final canFollow = widget.onFollow != null &&
+                widget.currentUserId != null &&
+                comment.userId.isNotEmpty &&
+                comment.userId != widget.currentUserId &&
+                !(widget.followedUserIds?.contains(comment.userId) ?? false);
+
             return _CommentBubble(
               comment: comment,
+              showFollow: canFollow,
+              onFollow: canFollow ? () => widget.onFollow!(comment) : null,
               // Host-only ⋮ menu (replaces long-press) when any action exists.
               onMenu: widget.isHost &&
                       (widget.onReply != null ||
@@ -391,7 +419,16 @@ class _CommentBubble extends StatelessWidget {
   /// menu (replaces the old long-press affordance). Null for viewers.
   final VoidCallback? onMenu;
 
-  const _CommentBubble({required this.comment, this.onMenu});
+  /// When true, a compact Follow pill is shown that calls [onFollow].
+  final bool showFollow;
+  final VoidCallback? onFollow;
+
+  const _CommentBubble({
+    required this.comment,
+    this.onMenu,
+    this.showFollow = false,
+    this.onFollow,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -468,6 +505,10 @@ class _CommentBubble extends StatelessWidget {
                   ],
                 ),
               ),
+              if (showFollow && onFollow != null) ...[
+                const SizedBox(width: 6),
+                _FollowPill(onTap: onFollow!),
+              ],
               if (onMenu != null) ...[
                 const SizedBox(width: 4),
                 GestureDetector(
@@ -483,6 +524,44 @@ class _CommentBubble extends StatelessWidget {
             ],
           ),
         ),
+    );
+  }
+}
+
+/// Compact "Follow" pill shown on another user's comment. Tapping it triggers
+/// the app's follow action; the bubble then disappears once the user is added
+/// to the followed set.
+class _FollowPill extends StatelessWidget {
+  final VoidCallback onTap;
+  const _FollowPill({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: SdkTheme.primaryRed,
+          borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add, color: Colors.white, size: 12),
+            SizedBox(width: 2),
+            Text(
+              'Follow',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

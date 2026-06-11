@@ -43,6 +43,11 @@ class LiveBroadcastHost extends StatefulWidget {
   /// Called once the live broadcast has successfully started.
   final VoidCallback? onLiveStarted;
 
+  /// Follow a commenter. The app performs the actual follow and returns true if
+  /// the current user now follows [userId]. When provided, a Follow pill appears
+  /// on other users' comments.
+  final Future<bool> Function(String userId)? onFollowUser;
+
   const LiveBroadcastHost({
     super.key,
     required this.userToken,
@@ -52,6 +57,7 @@ class LiveBroadcastHost extends StatefulWidget {
     this.title,
     this.onLiveEnded,
     this.onLiveStarted,
+    this.onFollowUser,
   });
 
   @override
@@ -63,6 +69,26 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
   DateTime? _startTime;
   bool _isConnecting = true; // true while WebRTC handshake is in progress
   LiveComment? _replyingTo;
+
+  /// Users followed during this session — their Follow pill is hidden.
+  final Set<String> _followedUserIds = {};
+
+  Future<void> _handleFollow(LiveComment comment) async {
+    final cb = widget.onFollowUser;
+    if (cb == null) return;
+    final nowFollowing = await cb(comment.userId);
+    if (!mounted) return;
+    setState(() {
+      if (nowFollowing) {
+        _followedUserIds.add(comment.userId);
+      } else {
+        _followedUserIds.remove(comment.userId);
+      }
+    });
+    _showSnack(nowFollowing
+        ? 'Following ${comment.userName}'
+        : 'Unfollowed ${comment.userName}');
+  }
 
   @override
   void initState() {
@@ -350,6 +376,9 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
               comments: _controller.comments,
               isHost: true,
               pinnedComment: _controller.pinnedComment,
+              currentUserId: widget.identity,
+              followedUserIds: _followedUserIds,
+              onFollow: widget.onFollowUser != null ? _handleFollow : null,
               onReply: (c) => setState(() => _replyingTo = c),
               onPin: _controller.pinComment,
               onUnpin: _controller.unpinComment,
