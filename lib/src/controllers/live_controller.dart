@@ -41,7 +41,8 @@ class LiveController extends ChangeNotifier {
   Future<Set<String>> Function(List<String> uids)? followingChecker;
   final Set<String> _followedUserIds = {}; // known already-followed
   final Set<String> _checkedFollowIds = {}; // resolved (avoid re-checking)
-  final Set<String> _extraFollowUids = {}; // non-commenters to also check (host)
+  final Set<String> _extraFollowUids =
+      {}; // non-commenters to also check (host)
   bool _resolvingFollow = false;
 
   /// Running total of gift coins (gross value) sent in the current session.
@@ -79,6 +80,7 @@ class LiveController extends ChangeNotifier {
   StreamSubscription? _commentSub;
   StreamSubscription? _reactionSub;
   StreamSubscription? _giftSub;
+  StreamSubscription? _giftTotalSub;
   StreamSubscription? _viewerCountSub;
   StreamSubscription? _commentPinSub;
   StreamSubscription? _blockedSub;
@@ -204,6 +206,7 @@ class LiveController extends ChangeNotifier {
     required String roomName,
     required String livekitUrl,
     required String socketUrl,
+
     /// Viewers default to MEDIUM quality to reduce server routing load.
     VideoQuality preferredQuality = VideoQuality.MEDIUM,
   }) async {
@@ -260,7 +263,8 @@ class LiveController extends ChangeNotifier {
   /// Send a comment. Pass [replyTo] to mark it as a reply to another comment;
   /// the recipient bubble will show "@theirName" context above the message.
   void sendComment(String message, {LiveComment? replyTo}) {
-    if (_roomName == null || _identity == null || message.trim().isEmpty) return;
+    if (_roomName == null || _identity == null || message.trim().isEmpty)
+      return;
     // Blocked or comment-muted users can't post — the server drops it anyway.
     if (_isBlocked || _isCommentMuted) return;
 
@@ -473,7 +477,9 @@ class LiveController extends ChangeNotifier {
       consider(c.userId);
     }
     for (final uid in _extraFollowUids) {
-      consider(uid); // host (and any other non-commenters we were asked to check)
+      consider(
+        uid,
+      ); // host (and any other non-commenters we were asked to check)
     }
     if (pending.isEmpty) return;
 
@@ -493,7 +499,8 @@ class LiveController extends ChangeNotifier {
           uid.isNotEmpty &&
           uid != _identity &&
           !_checkedFollowIds.contains(uid);
-      final more = _comments.any((c) => needsCheck(c.userId)) ||
+      final more =
+          _comments.any((c) => needsCheck(c.userId)) ||
           _extraFollowUids.any(needsCheck);
       if (more) _resolveFollowChecks();
     }
@@ -658,7 +665,11 @@ class LiveController extends ChangeNotifier {
     _isLive = false;
 
     if (_roomName != null) {
-      _socketService.leaveLiveRoom(_roomName!, _identity ?? '', isHost: _isHost);
+      _socketService.leaveLiveRoom(
+        _roomName!,
+        _identity ?? '',
+        isHost: _isHost,
+      );
 
       if (_isHost) {
         try {
@@ -705,7 +716,8 @@ class LiveController extends ChangeNotifier {
     // renegotiation on a perfectly healthy stream. So instead of ending
     // immediately, start a grace timer and only confirm if it persists.
     if (!_isHost && _isLive) {
-      final hostSeemsGone = _livekitService.remoteParticipants.isEmpty ||
+      final hostSeemsGone =
+          _livekitService.remoteParticipants.isEmpty ||
           !_livekitService.isConnected;
       if (hostSeemsGone) {
         _hostGoneTimer ??= Timer(_hostGoneGrace, _confirmHostGone);
@@ -725,7 +737,8 @@ class LiveController extends ChangeNotifier {
   void _confirmHostGone() {
     _hostGoneTimer = null;
     if (_isHost || !_isLive) return;
-    final stillGone = _livekitService.remoteParticipants.isEmpty ||
+    final stillGone =
+        _livekitService.remoteParticipants.isEmpty ||
         !_livekitService.isConnected;
     if (stillGone) {
       _isLive = false;
@@ -748,19 +761,22 @@ class LiveController extends ChangeNotifier {
       final now = DateTime.now();
       // Fall back to a synthetic id if the server (or an older client)
       // didn't include one — reply / pin can't target it but rendering still works.
-      final id = (data['commentId'] as String?) ??
+      final id =
+          (data['commentId'] as String?) ??
           '${data['userId'] ?? 'unknown'}_${now.microsecondsSinceEpoch}';
 
-      _comments.add(LiveComment(
-        id: id,
-        userId: data['userId'] ?? '',
-        userName: data['userName'] ?? 'Unknown',
-        userAvatar: data['userAvatar'],
-        message: data['message'] ?? '',
-        timestamp: now,
-        replyToCommentId: data['replyToCommentId'] as String?,
-        replyToUserName: data['replyToUserName'] as String?,
-      ));
+      _comments.add(
+        LiveComment(
+          id: id,
+          userId: data['userId'] ?? '',
+          userName: data['userName'] ?? 'Unknown',
+          userAvatar: data['userAvatar'],
+          message: data['message'] ?? '',
+          timestamp: now,
+          replyToCommentId: data['replyToCommentId'] as String?,
+          replyToUserName: data['replyToUserName'] as String?,
+        ),
+      );
       if (_comments.length > _maxComments) _comments.removeAt(0);
       notifyListeners(); // user-visible — keep immediate
       _resolveFollowChecks(); // resolve Follow-pill status for this commenter
@@ -810,7 +826,8 @@ class LiveController extends ChangeNotifier {
     });
 
     _giftSub = _socketService.onGift.listen((data) {
-      if (data['userId'] == _identity) return; // our own gift is already floating
+      if (data['userId'] == _identity)
+        return; // our own gift is already floating
       if (_blockedUserIds.contains(data['userId'])) return;
 
       final gift = LiveGift(
@@ -829,7 +846,16 @@ class LiveController extends ChangeNotifier {
       );
 
       _pendingGifts.add(gift);
-      _sessionGiftCoins += gift.coin; // received gift adds to the session total
+      final sessionGiftCoins = (data['sessionGiftCoins'] is int)
+          ? data['sessionGiftCoins'] as int
+          : int.tryParse('${data['sessionGiftCoins']}') ?? 0;
+      if (sessionGiftCoins > 0) {
+        _sessionGiftCoins = sessionGiftCoins > _sessionGiftCoins
+            ? sessionGiftCoins
+            : _sessionGiftCoins;
+      } else {
+        _sessionGiftCoins += gift.coin; // fallback for older socket servers
+      }
       _scheduleNotify();
 
       Future.delayed(const Duration(seconds: 4), () {
@@ -837,6 +863,18 @@ class LiveController extends ChangeNotifier {
         if (!_isLive) return;
         _scheduleNotify();
       });
+    });
+
+    _giftTotalSub = _socketService.onGiftTotal.listen((data) {
+      if (data['room'] != null && data['room'] != _roomName) return;
+
+      final total = (data['sessionGiftCoins'] is int)
+          ? data['sessionGiftCoins'] as int
+          : int.tryParse('${data['sessionGiftCoins']}') ?? 0;
+      if (total <= _sessionGiftCoins) return;
+
+      _sessionGiftCoins = total;
+      _scheduleNotify();
     });
 
     _viewerCountSub = _socketService.onViewerCountUpdate.listen((count) {
@@ -887,20 +925,22 @@ class LiveController extends ChangeNotifier {
         final userId = (data['userId'] ?? '') as String;
         if (_blockedUserIds.contains(userId)) continue;
 
-        final id = (data['commentId'] as String?) ??
-            '${userId}_${history.length}';
+        final id =
+            (data['commentId'] as String?) ?? '${userId}_${history.length}';
         if (!existingIds.add(id)) continue; // skip dupes already shown
 
-        history.add(LiveComment(
-          id: id,
-          userId: userId,
-          userName: (data['userName'] ?? 'Unknown') as String,
-          userAvatar: data['userAvatar'] as String?,
-          message: (data['message'] ?? '') as String,
-          timestamp: DateTime.now(),
-          replyToCommentId: data['replyToCommentId'] as String?,
-          replyToUserName: data['replyToUserName'] as String?,
-        ));
+        history.add(
+          LiveComment(
+            id: id,
+            userId: userId,
+            userName: (data['userName'] ?? 'Unknown') as String,
+            userAvatar: data['userAvatar'] as String?,
+            message: (data['message'] ?? '') as String,
+            timestamp: DateTime.now(),
+            replyToCommentId: data['replyToCommentId'] as String?,
+            replyToUserName: data['replyToUserName'] as String?,
+          ),
+        );
       }
       if (history.isEmpty) return;
 
@@ -923,6 +963,7 @@ class LiveController extends ChangeNotifier {
     _commentSub?.cancel();
     _reactionSub?.cancel();
     _giftSub?.cancel();
+    _giftTotalSub?.cancel();
     _viewerCountSub?.cancel();
     _commentPinSub?.cancel();
     _blockedSub?.cancel();

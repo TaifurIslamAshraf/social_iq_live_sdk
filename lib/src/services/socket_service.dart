@@ -11,20 +11,26 @@ class SocketService extends ChangeNotifier {
 
   // Stream controllers for live events
   final _commentController = StreamController<Map<String, dynamic>>.broadcast();
-  final _reactionController = StreamController<Map<String, dynamic>>.broadcast();
+  final _reactionController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _giftController = StreamController<Map<String, dynamic>>.broadcast();
+  final _giftTotalController =
+      StreamController<Map<String, dynamic>>.broadcast();
   final _viewerCountController = StreamController<int>.broadcast();
-  final _connectController = StreamController<void>.broadcast(); // fires on (re)connect
+  final _connectController =
+      StreamController<void>.broadcast(); // fires on (re)connect
 
   /// Fires when the host pins or unpins a comment. Payload:
   /// `{ commentId: String?, pinned: bool }`. A null `commentId` with
   /// `pinned: false` means the host cleared the pin.
-  final _commentPinController = StreamController<Map<String, dynamic>>.broadcast();
+  final _commentPinController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   /// Emits the full live rooms list whenever the server pushes a `live_rooms_update` event.
   /// Payload shape: `{ status, total, rooms: [ { room_name, host_uid, host_name,
   ///   host_profile_picture, viewer_count, viewer_uids, started_at } ] }`
-  final _liveRoomsController = StreamController<Map<String, dynamic>>.broadcast();
+  final _liveRoomsController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   /// Fires when the host blocks a user from the live room. Payload:
   /// `{ blockedUserId: String }`. The blocked user's own client uses this to
@@ -59,10 +65,14 @@ class SocketService extends ChangeNotifier {
       StreamController<Map<String, dynamic>>.broadcast();
 
   // Stream controllers for call signaling
-  final _incomingCallController = StreamController<Map<String, dynamic>>.broadcast();
-  final _callAcceptedController = StreamController<Map<String, dynamic>>.broadcast();
-  final _callRejectedController = StreamController<Map<String, dynamic>>.broadcast();
-  final _callEndedController = StreamController<Map<String, dynamic>>.broadcast();
+  final _incomingCallController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _callAcceptedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _callRejectedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+  final _callEndedController =
+      StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<Map<String, dynamic>> get onComment => _commentController.stream;
   Stream<Map<String, dynamic>> get onReaction => _reactionController.stream;
@@ -70,13 +80,20 @@ class SocketService extends ChangeNotifier {
   /// Fires when someone sends a gift in the room. Payload:
   /// `{ room, userId, userName, giftKey, emoji, label, coin }`.
   Stream<Map<String, dynamic>> get onGift => _giftController.stream;
+
+  /// Fires with the room's accumulated gift total. Payload:
+  /// `{ room, sessionGiftCoins }`. Emitted after join and after each gift.
+  Stream<Map<String, dynamic>> get onGiftTotal => _giftTotalController.stream;
+
   Stream<int> get onViewerCountUpdate => _viewerCountController.stream;
-  Stream<void> get onConnect => _connectController.stream;  // fires on every connect/reconnect
+  Stream<void> get onConnect =>
+      _connectController.stream; // fires on every connect/reconnect
   Stream<Map<String, dynamic>> get onCommentPin => _commentPinController.stream;
 
   /// Realtime stream of live rooms. Listen to this instead of polling [ApiService.getLiveRooms].
   /// The server broadcasts an update on every host start/end and viewer join/leave.
-  Stream<Map<String, dynamic>> get onLiveRoomsUpdate => _liveRoomsController.stream;
+  Stream<Map<String, dynamic>> get onLiveRoomsUpdate =>
+      _liveRoomsController.stream;
 
   /// Fires when the host blocks a user. Payload: `{ blockedUserId: String }`.
   Stream<Map<String, dynamic>> get onBlocked => _blockedController.stream;
@@ -92,8 +109,7 @@ class SocketService extends ChangeNotifier {
   Stream<Map<String, dynamic>> get onBanned => _bannedController.stream;
 
   /// Fires when a banned user is refused entry. Payload: `{ message: String }`.
-  Stream<Map<String, dynamic>> get onBanBlocked =>
-      _banBlockedController.stream;
+  Stream<Map<String, dynamic>> get onBanBlocked => _banBlockedController.stream;
 
   /// Fires when the host comment-mutes a user. Payload: `{ targetUserId }`.
   Stream<Map<String, dynamic>> get onCommentMuted =>
@@ -103,16 +119,16 @@ class SocketService extends ChangeNotifier {
   Stream<Map<String, dynamic>> get onCommentDeleted =>
       _commentDeletedController.stream;
 
-  Stream<Map<String, dynamic>> get onIncomingCall => _incomingCallController.stream;
-  Stream<Map<String, dynamic>> get onCallAccepted => _callAcceptedController.stream;
-  Stream<Map<String, dynamic>> get onCallRejected => _callRejectedController.stream;
+  Stream<Map<String, dynamic>> get onIncomingCall =>
+      _incomingCallController.stream;
+  Stream<Map<String, dynamic>> get onCallAccepted =>
+      _callAcceptedController.stream;
+  Stream<Map<String, dynamic>> get onCallRejected =>
+      _callRejectedController.stream;
   Stream<Map<String, dynamic>> get onCallEnded => _callEndedController.stream;
 
   /// Connect to the Socket.IO server.
-  void connect({
-    required String url,
-    String? authToken,
-  }) {
+  void connect({required String url, String? authToken}) {
     _socket = io.io(
       url,
       io.OptionBuilder()
@@ -161,6 +177,12 @@ class SocketService extends ChangeNotifier {
 
     _socket!.on('live_gift', (data) {
       if (data is Map) _giftController.add(Map<String, dynamic>.from(data));
+    });
+
+    _socket!.on('live_gift_total', (data) {
+      if (data is Map) {
+        _giftTotalController.add(Map<String, dynamic>.from(data));
+      }
     });
 
     _socket!.on('comment_pinned', (data) {
@@ -222,7 +244,9 @@ class SocketService extends ChangeNotifier {
     // Realtime live rooms list — emitted globally by the server on any rooms mutation
     _socket!.on('live_rooms_update', (data) {
       if (data is Map) {
-        debugPrint('[SocketService] live_rooms_update: ${data['total']} room(s)');
+        debugPrint(
+          '[SocketService] live_rooms_update: ${data['total']} room(s)',
+        );
         _liveRoomsController.add(Map<String, dynamic>.from(data));
       }
     });
@@ -284,7 +308,11 @@ class SocketService extends ChangeNotifier {
 
   /// Leave a live stream room on socket.
   void leaveLiveRoom(String roomName, String userId, {bool isHost = false}) {
-    _socket?.emit('leave_live', {'room': roomName, 'userId': userId, 'isHost': isHost});
+    _socket?.emit('leave_live', {
+      'room': roomName,
+      'userId': userId,
+      'isHost': isHost,
+    });
   }
 
   /// Ask the server to push the current live rooms list via [onLiveRoomsUpdate].
@@ -516,7 +544,11 @@ class SocketService extends ChangeNotifier {
   }
 
   /// Accept an incoming call.
-  void acceptCall({required String callerId, required String receiverId, required String roomName}) {
+  void acceptCall({
+    required String callerId,
+    required String receiverId,
+    required String roomName,
+  }) {
     _socket?.emit('call_answer', {
       'callerId': callerId,
       'receiverId': receiverId,
@@ -526,7 +558,10 @@ class SocketService extends ChangeNotifier {
 
   /// Reject an incoming call.
   void rejectCall({required String callerId, required String receiverId}) {
-    _socket?.emit('call_reject', {'callerId': callerId, 'receiverId': receiverId});
+    _socket?.emit('call_reject', {
+      'callerId': callerId,
+      'receiverId': receiverId,
+    });
   }
 
   /// Notify both parties that the call has ended.
@@ -548,6 +583,7 @@ class SocketService extends ChangeNotifier {
     _commentController.close();
     _reactionController.close();
     _giftController.close();
+    _giftTotalController.close();
     _viewerCountController.close();
     _connectController.close();
     _commentPinController.close();
@@ -566,5 +602,3 @@ class SocketService extends ChangeNotifier {
     super.dispose();
   }
 }
-
-
