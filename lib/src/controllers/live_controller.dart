@@ -41,6 +41,7 @@ class LiveController extends ChangeNotifier {
   Future<Set<String>> Function(List<String> uids)? followingChecker;
   final Set<String> _followedUserIds = {}; // known already-followed
   final Set<String> _checkedFollowIds = {}; // resolved (avoid re-checking)
+  final Set<String> _extraFollowUids = {}; // non-commenters to also check (host)
   bool _resolvingFollow = false;
 
   /// Running total of gift coins (gross value) sent in the current session.
@@ -441,6 +442,18 @@ class LiveController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Resolve follow status for specific uids that may never comment (e.g. the
+  /// host), so the viewer can be offered a Follow button for them too.
+  void seedFollowCheck(Iterable<String> uids) {
+    var added = false;
+    for (final uid in uids) {
+      if (uid.isEmpty || uid == _identity) continue;
+      if (_checkedFollowIds.contains(uid)) continue;
+      if (_extraFollowUids.add(uid)) added = true;
+    }
+    if (added) _resolveFollowChecks();
+  }
+
   /// Resolve follow status for any new commenters (excludes self and anyone
   /// already checked), batched into a single backend call. Called whenever
   /// comments change. Only ever inspects users who actually comment — never the
@@ -450,11 +463,17 @@ class LiveController extends ChangeNotifier {
     if (checker == null || _resolvingFollow) return;
 
     final pending = <String>{};
-    for (final c in _comments) {
-      final uid = c.userId;
-      if (uid.isEmpty || uid == _identity) continue;
-      if (_checkedFollowIds.contains(uid)) continue;
+    void consider(String uid) {
+      if (uid.isEmpty || uid == _identity) return;
+      if (_checkedFollowIds.contains(uid)) return;
       pending.add(uid);
+    }
+
+    for (final c in _comments) {
+      consider(c.userId);
+    }
+    for (final uid in _extraFollowUids) {
+      consider(uid); // host (and any other non-commenters we were asked to check)
     }
     if (pending.isEmpty) return;
 
@@ -469,11 +488,13 @@ class LiveController extends ChangeNotifier {
       _checkedFollowIds.removeAll(pending); // allow a later retry
     } finally {
       _resolvingFollow = false;
-      // Pick up anyone who commented while we were resolving.
-      final more = _comments.any((c) =>
-          c.userId.isNotEmpty &&
-          c.userId != _identity &&
-          !_checkedFollowIds.contains(c.userId));
+      // Pick up anyone who commented (or was seeded) while we were resolving.
+      bool needsCheck(String uid) =>
+          uid.isNotEmpty &&
+          uid != _identity &&
+          !_checkedFollowIds.contains(uid);
+      final more = _comments.any((c) => needsCheck(c.userId)) ||
+          _extraFollowUids.any(needsCheck);
       if (more) _resolveFollowChecks();
     }
   }

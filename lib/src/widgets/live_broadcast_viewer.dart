@@ -105,17 +105,31 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   bool _liveEnded = false; // true once host ends stream; shows overlay before pop
   bool _isConnecting = true; // true while WebRTC handshake is in progress
 
-  Future<void> _handleFollow(LiveComment comment) async {
+  /// The host's uid — rooms are named `live_<hostUid>` by the SDK.
+  String get _hostUid => widget.roomName.startsWith('live_')
+      ? widget.roomName.substring('live_'.length)
+      : widget.roomName;
+
+  /// True when the host can be followed: callback wired, host known, not self,
+  /// and resolved as not-yet-followed.
+  bool get _canFollowHost =>
+      widget.onFollowUser != null &&
+      _hostUid.isNotEmpty &&
+      _hostUid != widget.identity &&
+      _controller.followableUserIds.contains(_hostUid);
+
+  Future<void> _handleFollow(LiveComment comment) =>
+      _followUid(comment.userId, comment.userName);
+
+  Future<void> _followUid(String uid, String name) async {
     final cb = widget.onFollowUser;
-    if (cb == null) return;
-    final nowFollowing = await cb(comment.userId);
+    if (cb == null || uid.isEmpty) return;
+    final nowFollowing = await cb(uid);
     if (!mounted) return;
-    _controller.markFollowed(comment.userId, nowFollowing);
+    _controller.markFollowed(uid, nowFollowing);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(nowFollowing
-            ? 'Following ${comment.userName}'
-            : 'Unfollowed ${comment.userName}'),
+        content: Text(nowFollowing ? 'Following $name' : 'Unfollowed $name'),
         behavior: SnackBarBehavior.floating,
         duration: const Duration(seconds: 2),
       ),
@@ -154,6 +168,11 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
         preferredQuality: widget.preferredQuality,
       );
       if (mounted) setState(() => _isConnecting = false);
+      // Resolve follow status for the host so the "Follow" button next to their
+      // name can appear even if they never comment.
+      if (widget.onCheckFollowing != null) {
+        _controller.seedFollowCheck([_hostUid]);
+      }
       widget.onLiveViewStarted?.call();
     } catch (e) {
       if (!mounted) return;
@@ -467,6 +486,13 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
                   avatarUrl: widget.hostAvatar,
                   displayName: widget.hostName ?? 'Host',
                 ),
+                if (_canFollowHost) ...[
+                  const SizedBox(width: 6),
+                  _HostFollowPill(
+                    onTap: () =>
+                        _followUid(_hostUid, widget.hostName ?? 'Host'),
+                  ),
+                ],
                 const SizedBox(width: 8),
                 const _ViewerLivePill(),
                 const SizedBox(width: 8),
@@ -790,6 +816,36 @@ class _ViewerHostChip extends StatelessWidget {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact "+ Follow" pill shown next to the host's name in the top bar, so a
+/// viewer can follow the host even if the host never comments.
+class _HostFollowPill extends StatelessWidget {
+  final VoidCallback onTap;
+  const _HostFollowPill({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: SdkTheme.primaryRed,
+          borderRadius: BorderRadius.circular(SdkTheme.radiusRound),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add, color: Colors.white, size: 14),
+            SizedBox(width: 3),
+            Text('Follow', style: SdkTheme.labelBold),
           ],
         ),
       ),
