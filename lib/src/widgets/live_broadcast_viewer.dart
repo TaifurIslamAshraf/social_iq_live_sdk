@@ -214,12 +214,18 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
     if (_hasNavigatedAway) return;
     _hasNavigatedAway = true;
     widget.onLiveViewLeave?.call();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        widget.onLiveEnded?.call();
-        Navigator.of(context).pop();
-      }
-    });
+    if (!mounted) return;
+    widget.onLiveEnded?.call();
+    // Pop directly rather than via addPostFrameCallback. Once the host ends the
+    // stream the viewer UI goes completely idle — no video frames, no comment or
+    // reaction animations — so no new frame is ever scheduled. A post-frame
+    // callback only runs *after the next frame*, which never comes, so the
+    // "Live has ended" overlay stayed stuck on screen for viewers with no
+    // on-screen activity. This is always called from an async callback (the 2s
+    // timer or _leaveStream), never during build, so popping here is safe.
+    if (mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
   }
 
   void _onDoubleTapReact() {
@@ -386,7 +392,14 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
-        _confirmLeave();
+        // While the "Live has ended"/removed overlay is showing there's nothing
+        // to confirm — back should leave immediately instead of being a no-op
+        // (_confirmLeave early-returns when _liveEnded is true).
+        if (_liveEnded) {
+          _navigateAway();
+        } else {
+          _confirmLeave();
+        }
       },
       child: Scaffold(
       backgroundColor: Colors.black,
