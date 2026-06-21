@@ -489,61 +489,73 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
           ),
 
           // ── Top bar ────────────────────────────────────────────────────
+          // Two-row layout:
+          //   Row 1: host chip + LIVE badge …… close (✕)
+          //   Row 2: Follow pill …… viewer + gift counts
           Positioned(
             top: mq.padding.top + 10,
             left: 12,
             right: 12,
-            child: Row(
+            child: Column(
               children: [
-                _ViewerHostChip(
-                  avatarUrl: widget.hostAvatar,
-                  displayName: widget.hostName ?? 'Host',
+                // Row 1 — host identity + LIVE, close on the right
+                Row(
+                  children: [
+                    _ViewerHostChip(
+                      avatarUrl: widget.hostAvatar,
+                      displayName: widget.hostName ?? 'Host',
+                    ),
+                    const SizedBox(width: 8),
+                    const _ViewerLivePill(),
+                    const Spacer(),
+                    _ViewerCircleIconButton(
+                      icon: Icons.close,
+                      onTap: _confirmLeave,
+                    ),
+                  ],
                 ),
-                if (_canFollowHost) ...[
-                  const SizedBox(width: 6),
-                  _HostFollowPill(
-                    onTap: () =>
-                        _followUid(_hostUid, widget.hostName ?? 'Host'),
-                  ),
-                ],
-                const SizedBox(width: 8),
-                const _ViewerLivePill(),
-                const SizedBox(width: 8),
-                _ViewerGlassPill(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.remove_red_eye_outlined,
-                          color: Colors.white, size: 14),
-                      const SizedBox(width: 4),
-                      Text(
-                        _formatViewerCount(_controller.viewerCount),
-                        style: SdkTheme.labelBold,
+                const SizedBox(height: 8),
+                // Row 2 — Follow on the left, counts on the right
+                Row(
+                  children: [
+                    if (_canFollowHost)
+                      _HostFollowPill(
+                        onTap: () =>
+                            _followUid(_hostUid, widget.hostName ?? 'Host'),
+                      ),
+                    const Spacer(),
+                    _ViewerGlassPill(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.remove_red_eye_outlined,
+                              color: Colors.white, size: 14),
+                          const SizedBox(width: 4),
+                          Text(
+                            _formatViewerCount(_controller.viewerCount),
+                            style: SdkTheme.labelBold,
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_controller.sessionGiftCoins > 0) ...[
+                      const SizedBox(width: 8),
+                      _ViewerGlassPill(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.monetization_on,
+                                color: Colors.amber, size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              _formatViewerCount(_controller.sessionGiftCoins),
+                              style: SdkTheme.labelBold,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
-                  ),
-                ),
-                if (_controller.sessionGiftCoins > 0) ...[
-                  const SizedBox(width: 8),
-                  _ViewerGlassPill(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.monetization_on,
-                            color: Colors.amber, size: 14),
-                        const SizedBox(width: 4),
-                        Text(
-                          _formatViewerCount(_controller.sessionGiftCoins),
-                          style: SdkTheme.labelBold,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                _ViewerCircleIconButton(
-                  icon: Icons.close,
-                  onTap: _confirmLeave,
+                  ],
                 ),
               ],
             ),

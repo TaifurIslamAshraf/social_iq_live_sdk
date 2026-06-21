@@ -288,59 +288,73 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
           ),
 
           // ── Top bar ────────────────────────────────────────────────────
+          // Two-row layout:
+          //   Row 1: host chip + LIVE badge …… close (✕)
+          //   Row 2: (host has no Follow on self) …… viewer + gift counts
           Positioned(
             top: mq.padding.top + 10,
             left: 12,
             right: 12,
-            child: Row(
+            child: Column(
               children: [
-                // Host identity chip (avatar + display name)
-                _HostChip(
-                  avatarUrl: widget.avatarUrl,
-                  displayName: widget.displayName,
+                // Row 1 — identity + LIVE, close on the right
+                Row(
+                  children: [
+                    // Host identity chip (avatar + display name)
+                    _HostChip(
+                      avatarUrl: widget.avatarUrl,
+                      displayName: widget.displayName,
+                    ),
+                    const SizedBox(width: 8),
+                    // LIVE badge with pulsing dot
+                    const _LivePill(),
+                    const Spacer(),
+                    // Close button
+                    _CircleIconButton(
+                      icon: Icons.close,
+                      onTap: _confirmEnd,
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 8),
-                // LIVE badge with pulsing dot
-                const _LivePill(),
-                const SizedBox(width: 8),
-                // Viewer count
-                _GlassPill(
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.remove_red_eye_outlined,
-                          color: Colors.white, size: 14),
-                      const SizedBox(width: 4),
-                      Text(
-                        _formatCount(_controller.viewerCount),
-                        style: SdkTheme.labelBold,
+                const SizedBox(height: 8),
+                // Row 2 — counts pushed to the right
+                Row(
+                  children: [
+                    const Spacer(),
+                    // Viewer count
+                    _GlassPill(
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.remove_red_eye_outlined,
+                              color: Colors.white, size: 14),
+                          const SizedBox(width: 4),
+                          Text(
+                            _formatCount(_controller.viewerCount),
+                            style: SdkTheme.labelBold,
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_controller.sessionGiftCoins > 0) ...[
+                      const SizedBox(width: 8),
+                      // Gift coins received this session (gross value)
+                      _GlassPill(
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.monetization_on,
+                                color: Colors.amber, size: 14),
+                            const SizedBox(width: 4),
+                            Text(
+                              _formatCount(_controller.sessionGiftCoins),
+                              style: SdkTheme.labelBold,
+                            ),
+                          ],
+                        ),
                       ),
                     ],
-                  ),
-                ),
-                if (_controller.sessionGiftCoins > 0) ...[
-                  const SizedBox(width: 8),
-                  // Gift coins received this session (gross value)
-                  _GlassPill(
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.monetization_on,
-                            color: Colors.amber, size: 14),
-                        const SizedBox(width: 4),
-                        Text(
-                          _formatCount(_controller.sessionGiftCoins),
-                          style: SdkTheme.labelBold,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-                const Spacer(),
-                // Close button
-                _CircleIconButton(
-                  icon: Icons.close,
-                  onTap: _confirmEnd,
+                  ],
                 ),
               ],
             ),
