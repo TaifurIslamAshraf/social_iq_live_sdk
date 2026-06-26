@@ -212,10 +212,22 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
 
   void _navigateAway() {
     if (_hasNavigatedAway) return;
-    _hasNavigatedAway = true;
-    widget.onLiveViewLeave?.call();
     if (!mounted) return;
-    widget.onLiveEnded?.call();
+
+    // Run the app callbacks defensively. These hand control to the embedding
+    // app (analytics + interstitial ads). A synchronous throw here — e.g. an
+    // ad SDK's show() on a stale/disposed ad — must NEVER prevent the route
+    // from being popped, otherwise the viewer is stranded on the "Live has
+    // ended" overlay forever.
+    try {
+      widget.onLiveViewLeave?.call();
+    } catch (_) {}
+    if (!mounted) return;
+    try {
+      widget.onLiveEnded?.call();
+    } catch (_) {}
+    if (!mounted) return;
+
     // Pop directly rather than via addPostFrameCallback. Once the host ends the
     // stream the viewer UI goes completely idle — no video frames, no comment or
     // reaction animations — so no new frame is ever scheduled. A post-frame
@@ -223,8 +235,14 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
     // "Live has ended" overlay stayed stuck on screen for viewers with no
     // on-screen activity. This is always called from an async callback (the 2s
     // timer or _leaveStream), never during build, so popping here is safe.
-    if (mounted && Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
+    //
+    // Only latch _hasNavigatedAway once we've actually popped. If the pop can't
+    // run (canPop() is false), we leave the guard down so a later back-button
+    // press can retry the exit instead of being permanently swallowed.
+    final navigator = Navigator.of(context);
+    if (navigator.canPop()) {
+      _hasNavigatedAway = true;
+      navigator.pop();
     }
   }
 
@@ -671,40 +689,55 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
           // kicked/banned, so they get feedback instead of a black screen.
           if (_liveEnded)
             Positioned.fill(
-              child: Container(
-                color: Colors.black.withValues(alpha: 0.75),
-                child: Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: const BoxDecoration(
-                          color: SdkTheme.endCallRed,
-                          shape: BoxShape.circle,
+              // Tap anywhere on the overlay to exit. This is a safety net on top
+              // of the 2s auto-dismiss: if the automatic pop ever fails to run,
+              // the viewer can still leave manually instead of being stranded.
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _navigateAway,
+                child: Container(
+                  color: Colors.black.withValues(alpha: 0.75),
+                  child: Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(20),
+                          decoration: const BoxDecoration(
+                            color: SdkTheme.endCallRed,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(_removedOverlayIcon,
+                              color: Colors.white, size: 36),
                         ),
-                        child: Icon(_removedOverlayIcon,
-                            color: Colors.white, size: 36),
-                      ),
-                      const SizedBox(height: 20),
-                      Text(
-                        _removedOverlayTitle,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 22,
-                          fontWeight: FontWeight.w700,
+                        const SizedBox(height: 20),
+                        Text(
+                          _removedOverlayTitle,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _removedOverlayBody,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.6),
-                          fontSize: 14,
+                        const SizedBox(height: 8),
+                        Text(
+                          _removedOverlayBody,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.6),
+                            fontSize: 14,
+                          ),
                         ),
-                      ),
-                    ],
+                        const SizedBox(height: 16),
+                        Text(
+                          'Tap anywhere to exit',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.4),
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
