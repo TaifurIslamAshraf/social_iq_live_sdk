@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -74,6 +75,11 @@ class LiveBroadcastViewer extends StatefulWidget {
   /// checks commenters, so it scales no matter how many you follow.
   final Future<Set<String>> Function(List<String> uids)? onCheckFollowing;
 
+  /// Set by the host app when this user is currently barred from live chat.
+  /// The comment input is replaced by this message, matching how host blocks
+  /// and comment mutes already behave.
+  final String? commentRestrictionMessage;
+
   const LiveBroadcastViewer({
     super.key,
     required this.userToken,
@@ -91,6 +97,7 @@ class LiveBroadcastViewer extends StatefulWidget {
     this.giftCatalog = kDefaultGiftCatalog,
     this.onFollowUser,
     this.onCheckFollowing,
+    this.commentRestrictionMessage,
   });
 
   @override
@@ -152,8 +159,27 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
     );
     _controller.followingChecker = widget.onCheckFollowing;
     _controller.addListener(_onUpdate);
+
+    // The server refuses this viewer's own comment when their account is
+    // restricted, and says so. (Spam-filtered content is dropped silently
+    // instead, so nothing arrives here for it.) The controller has already
+    // removed the optimistic bubble by this point.
+    _commentBlockedSub = _controller.onCommentBlocked.listen((message) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: SdkTheme.endCallRed,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    });
+
     _joinStream();
   }
+
+  StreamSubscription<String>? _commentBlockedSub;
 
   Future<void> _joinStream() async {
     try {
@@ -395,6 +421,7 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
   @override
   void dispose() {
     WakelockPlus.disable();
+    _commentBlockedSub?.cancel();
     _controller.removeListener(_onUpdate);
     _controller.dispose();
     super.dispose();
@@ -613,7 +640,9 @@ class _LiveBroadcastViewerState extends State<LiveBroadcastViewer> {
             left: 12,
             right: 12,
             bottom: 16 + bottomPad,
-            child: _controller.isBlocked
+            child: widget.commentRestrictionMessage != null
+                ? _BlockedNotice(message: widget.commentRestrictionMessage!)
+                : _controller.isBlocked
                 ? const _BlockedNotice(
                     message: "You've been blocked by the host")
                 : _controller.isCommentMuted

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:livekit_client/livekit_client.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
@@ -53,6 +54,11 @@ class LiveBroadcastHost extends StatefulWidget {
   /// checks commenters, so it scales no matter how many you follow.
   final Future<Set<String>> Function(List<String> uids)? onCheckFollowing;
 
+  /// Set by the host app when this user is currently barred from live chat.
+  /// The comment input is replaced by this message, matching how host blocks
+  /// and comment mutes already behave.
+  final String? commentRestrictionMessage;
+
   const LiveBroadcastHost({
     super.key,
     required this.userToken,
@@ -64,6 +70,7 @@ class LiveBroadcastHost extends StatefulWidget {
     this.onLiveStarted,
     this.onFollowUser,
     this.onCheckFollowing,
+    this.commentRestrictionMessage,
   });
 
   @override
@@ -99,8 +106,24 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
     );
     _controller.followingChecker = widget.onCheckFollowing;
     _controller.addListener(_onUpdate);
+
+    // A restricted host is refused too — same path as the viewer.
+    _commentBlockedSub = _controller.onCommentBlocked.listen((message) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: SdkTheme.endCallRed,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+    });
+
     _startBroadcast();
   }
+
+  StreamSubscription<String>? _commentBlockedSub;
 
   Future<void> _startBroadcast() async {
     try {
@@ -175,6 +198,7 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
   @override
   void dispose() {
     WakelockPlus.disable();
+    _commentBlockedSub?.cancel();
     _controller.removeListener(_onUpdate);
     _controller.dispose();
     super.dispose();
@@ -429,6 +453,11 @@ class _LiveBroadcastHostState extends State<LiveBroadcastHost> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // A host who is themselves restricted from live chat gets the
+                // reason in place of the input, same as a blocked viewer does.
+                if (widget.commentRestrictionMessage != null)
+                  _HostBlockedNotice(message: widget.commentRestrictionMessage!)
+                else
                 CommentInput(
                   onSubmit: _sendCommentFromInput,
                   replyingTo: _replyingTo,
@@ -765,4 +794,39 @@ class SocialIqLiveSdkConfig {
   static String serverUrl = '';
   static String socketUrl = '';
   static String apiBaseUrl = '';
+}
+
+/// Shown in place of the host's comment input when they are barred from live
+/// chat. Mirrors `_BlockedNotice` in the viewer, which is private to that file.
+class _HostBlockedNotice extends StatelessWidget {
+  final String message;
+  const _HostBlockedNotice({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.6),
+        borderRadius: BorderRadius.circular(SdkTheme.radiusXL),
+        border: Border.all(
+          color: SdkTheme.primaryRed.withValues(alpha: 0.5),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.timer_off, color: Colors.white70, size: 16),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              message,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

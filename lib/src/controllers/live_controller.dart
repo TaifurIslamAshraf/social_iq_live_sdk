@@ -90,10 +90,25 @@ class LiveController extends ChangeNotifier {
   StreamSubscription? _banBlockedSub;
   StreamSubscription? _commentMutedSub;
   StreamSubscription? _commentDeletedSub;
+  StreamSubscription? _commentBlockedSub;
+
+  /// Last reason the server gave for refusing this client's own comment
+  /// (restricted account). Null until one arrives.
+  String? _commentBlockedMessage;
+
+  /// Fires each time this client's own comment is refused, so the UI can show
+  /// a one-off notice rather than polling [commentBlockedMessage].
+  final _commentBlockedController = StreamController<String>.broadcast();
 
   // Public getters
   LiveKitService get livekitService => _livekitService;
   List<LiveComment> get comments => List.unmodifiable(_comments);
+
+  /// Reason the server last refused this client's own comment, if any.
+  String? get commentBlockedMessage => _commentBlockedMessage;
+
+  /// Stream of refusal messages for this client's own comments.
+  Stream<String> get onCommentBlocked => _commentBlockedController.stream;
   List<LiveReaction> get pendingReactions =>
       List.unmodifiable(_pendingReactions);
   List<LiveGift> get pendingGifts => List.unmodifiable(_pendingGifts);
@@ -909,6 +924,24 @@ class LiveController extends ChangeNotifier {
       }
     });
 
+    // The server refused this client's own comment and wants the user told —
+    // sent only when the account is restricted. Spam-blocked content is dropped
+    // silently instead, so nothing arrives here for it.
+    _commentBlockedSub = _socketService.onCommentBlocked.listen((data) {
+      final message = (data['message'] ?? '').toString();
+      final commentId = (data['commentId'] ?? '').toString();
+
+      // Take the optimistic bubble back down — it was never delivered to the
+      // room, so leaving it on screen tells the user a comfortable lie.
+      if (commentId.isNotEmpty) _removeCommentById(commentId);
+
+      if (message.isNotEmpty) {
+        _commentBlockedMessage = message;
+        _commentBlockedController.add(message);
+      }
+      notifyListeners();
+    });
+
     _commentDeletedSub = _socketService.onCommentDeleted.listen((data) {
       final commentId = (data['commentId'] ?? '') as String;
       if (commentId.isEmpty) return;
@@ -973,6 +1006,8 @@ class LiveController extends ChangeNotifier {
     _banBlockedSub?.cancel();
     _commentMutedSub?.cancel();
     _commentDeletedSub?.cancel();
+    _commentBlockedSub?.cancel();
+    _commentBlockedController.close();
     _livekitService.removeListener(_onLiveKitUpdate);
     _livekitService.dispose();
     _socketService.dispose();

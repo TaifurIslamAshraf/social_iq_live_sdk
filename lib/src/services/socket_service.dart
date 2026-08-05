@@ -64,6 +64,15 @@ class SocketService extends ChangeNotifier {
   final _commentDeletedController =
       StreamController<Map<String, dynamic>>.broadcast();
 
+  /// Fires when the server refuses this user's own comment and wants them told.
+  /// Payload: `{ message: String, code: String, commentId: String? }`.
+  ///
+  /// Only sent when the account is *restricted* — content the spam filter
+  /// blocks is dropped silently instead, so a spammer gets no feedback to
+  /// iterate against mid-stream. Sent to the offending socket only.
+  final _commentBlockedController =
+      StreamController<Map<String, dynamic>>.broadcast();
+
   // Stream controllers for call signaling
   final _incomingCallController =
       StreamController<Map<String, dynamic>>.broadcast();
@@ -118,6 +127,11 @@ class SocketService extends ChangeNotifier {
   /// Fires when the host deletes a comment. Payload: `{ commentId }`.
   Stream<Map<String, dynamic>> get onCommentDeleted =>
       _commentDeletedController.stream;
+
+  /// Fires when the server refuses this user's own comment (restricted
+  /// account). Payload: `{ message, code, commentId }`.
+  Stream<Map<String, dynamic>> get onCommentBlocked =>
+      _commentBlockedController.stream;
 
   Stream<Map<String, dynamic>> get onIncomingCall =>
       _incomingCallController.stream;
@@ -224,6 +238,12 @@ class SocketService extends ChangeNotifier {
     _socket!.on('live_comment_muted', (data) {
       if (data is Map) {
         _commentMutedController.add(Map<String, dynamic>.from(data));
+      }
+    });
+
+    _socket!.on('live_comment_blocked', (data) {
+      if (data is Map) {
+        _commentBlockedController.add(Map<String, dynamic>.from(data));
       }
     });
 
@@ -595,6 +615,7 @@ class SocketService extends ChangeNotifier {
     _banBlockedController.close();
     _commentMutedController.close();
     _commentDeletedController.close();
+    _commentBlockedController.close();
     _incomingCallController.close();
     _callAcceptedController.close();
     _callRejectedController.close();
