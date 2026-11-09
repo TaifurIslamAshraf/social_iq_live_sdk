@@ -49,7 +49,16 @@ class LiveController extends ChangeNotifier {
   /// In-memory only — resets when a new broadcast starts/joins.
   int _sessionGiftCoins = 0;
   LiveComment? _pinnedComment;
+
+  /// Viewers watching, host excluded. Authoritative value comes from the
+  /// server's `viewer_count` socket event (distinct users, same number the
+  /// live rooms list shows).
   int _viewerCount = 0;
+
+  /// True once the server has sent a `viewer_count` for this session. Until
+  /// then a viewer shows a LiveKit-based estimate; after it, LiveKit never
+  /// overwrites the server value.
+  bool _hasServerViewerCount = false;
   bool _isLive = false;
   bool _isHost = false;
   String? _roomName;
@@ -175,6 +184,8 @@ class LiveController extends ChangeNotifier {
     _avatarUrl = avatarUrl;
     _roomName = 'live_$identity';
     _sessionGiftCoins = 0;
+    _viewerCount = 0;
+    _hasServerViewerCount = false;
 
     _apiService.setAuthToken(userToken);
 
@@ -231,6 +242,8 @@ class LiveController extends ChangeNotifier {
     _avatarUrl = avatarUrl;
     _roomName = roomName;
     _sessionGiftCoins = 0;
+    _viewerCount = 0;
+    _hasServerViewerCount = false;
 
     _preferredQuality = preferredQuality;
     _apiService.setAuthToken(userToken);
@@ -707,13 +720,16 @@ class LiveController extends ChangeNotifier {
   // ── Internal ──────────────────────────────────────────────────────────────
 
   void _onLiveKitUpdate() {
-    // For viewers, keep participant count in sync with LiveKit.
-    // For the host, viewer count is sourced exclusively from the socket
-    // (_viewerCountSub) — LiveKit's remoteParticipants can transiently return
-    // 0 during local track events (mic/camera toggle) and must not overwrite
-    // the socket-authoritative value.
+    // Viewer count is sourced from the server's socket count (_viewerCountSub)
+    // for host and viewers alike. LiveKit is only a stand-in for a viewer until
+    // that first arrives: it counts the host as a participant and fires on
+    // every track/speaker event, so letting it write after the server value
+    // made the number flicker between N and N+1. Its estimate here is
+    // remoteParticipants (host + other viewers) + self − host.
     if (!_isHost) {
-      _viewerCount = _livekitService.participantCount;
+      if (!_hasServerViewerCount) {
+        _viewerCount = _livekitService.remoteParticipants.length;
+      }
 
       // Re-apply preferred quality on every LiveKit update so that tracks
       // subscribed after the initial join (e.g. host enables camera late) also
@@ -893,6 +909,7 @@ class LiveController extends ChangeNotifier {
     });
 
     _viewerCountSub = _socketService.onViewerCountUpdate.listen((count) {
+      _hasServerViewerCount = true;
       _viewerCount = count;
       _scheduleNotify();
     });
